@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester</h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build flight-rules-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -88,9 +88,9 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     for(const j of [15,16]){if(!p[j])continue;ox.fillStyle='#f43f5e';ox.beginPath();ox.arc(p[j].x*W,p[j].y*H,Math.max(4,W/110),0,6.283);ox.fill()}
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
-let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false,lastAssign=-99;
+let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false,lastAssign=-99,underSpots=[];
 const TXT={flight:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',air:'airmail / off the back'},PC={1:'#60a5fa',2:'#f59e0b'},SC={flying:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff'};
-function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];lastAssign=-99;showTr()}
+function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];lastAssign=-99;underSpots=[];showTr()}
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
 function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
@@ -100,11 +100,14 @@ function overHole(t){if(!holeBox)return false;const h=holeBox,cx=t.x+t.w/2,cy=t.
   if(cx>h.x-mx&&cx<h.x+h.w+mx&&cy>h.y-my&&cy<h.y+h.h+my)return true;
   const ox1=Math.max(t.x,h.x),oy1=Math.max(t.y,h.y),ox2=Math.min(t.x+t.w,h.x+h.w),oy2=Math.min(t.y+t.h,h.y+h.h);
   return Math.max(0,ox2-ox1)*Math.max(0,oy2-oy1)>=0.35*t.w*t.h}
-function arenaBox(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;return {x:x0-0.15*w,y:y0-1.2*h,w:w*1.3,h:h*2.2}}
+function willHole(t,miss){if(!holeBox||!t.fly)return false;const f=Math.min(miss,0.6);return overHole({x:t.x+(t.vx||0)*f,y:t.y+(t.vy||0)*f,w:t.w,h:t.h})}
+function arenaBox(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;return {x:x0-0.45*w,y:y0-3.5*h,w:w*1.9,h:h*4.5}}
+function underBox(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;return {x:x0+0.05*w,y:y1,w:w*0.9,h:h*0.9}}
 function nearBox(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;return {x:x0-0.35*w,y:y0-0.35*h,w:w*1.7,h:h*1.7}}
 function inBox(B,cx,cy){return !!B&&cx>B.x&&cx<B.x+B.w&&cy>B.y&&cy<B.y+B.h}
-function adopt(t,now,HOLD){const o=TR.filter(x=>x!==t&&x.num&&!x.landed&&x.state==='flight'&&now-x.seen>0.001&&now-x.seen<HOLD).sort((a,b)=>b.seen-a.seen)[0];
-  if(!o)return false;t.num=o.num;t.pl=o.pl;t.bn=o.bn;const i=throws.indexOf(o);if(i>=0)throws[i]=t;o.state='gone';o.prev='flight';return true}
+function adopt(t,now,HOLD,cap){const cx=t.x+t.w/2,cy=t.y+t.h/2;
+  const o=TR.filter(x=>x!==t&&x.num&&!x.landed&&x.state==='flight'&&now-x.seen>0.001&&now-x.seen<Math.min(HOLD,1.2)&&(!cap||Math.hypot(x.x+x.w/2-cx,x.y+x.h/2-cy)<cap)).sort((a,b)=>b.seen-a.seen)[0];
+  if(!o)return false;t.num=o.num;t.pl=o.pl;t.bn=o.bn;t.fly=true;const i=throws.indexOf(o);if(i>=0)throws[i]=t;o.state='gone';o.prev='flight';return true}
 function assign(t,now){if(t.num||nThrow>=8)return;lastAssign=now;nThrow++;t.num=nThrow;const f=Number($('first').value);t.pl=nThrow%2===1?f:3-f;t.bn=Math.ceil(nThrow/2);throws.push(t)}
 function track(dets,now,W,H){
   if(lastNow>=0&&now<lastNow-0.05)resetTracker();
@@ -113,29 +116,49 @@ function track(dets,now,W,H){
   const bb=dets.find(d=>d.nm==='board');if(bb)boardBox=bb;
   const Z=zone(W,H),HOLD=Math.max(.5,Number($('hold').value)||3),MINH=img?1:2,LOSS=0.3;
   const bags=dets.filter(d=>d.nm==='bag'),pairs=[];
-  TR.forEach((t,i)=>{if(t.state==='hole'||t.state==='gone')return;bags.forEach((d,j)=>{const dist=Math.hypot(d.x+d.w/2-t.x-t.w/2,d.y+d.h/2-t.y-t.h/2);{const sz=Math.max(t.w,t.h,d.w,d.h);if(dist<(t.landed?sz*1.5+10:sz*4+20))pairs.push([dist,i,j])}})});
+  TR.forEach((t,i)=>{if(t.state==='gone'||(t.state==='hole'&&!t.viaUnder))return;bags.forEach((d,j)=>{let dist=Math.hypot(d.x+d.w/2-t.x-t.w/2,d.y+d.h/2-t.y-t.h/2);const sz=Math.max(t.w,t.h,d.w,d.h),tr=t.hits>=2&&!t.landed&&!t.viaUnder;
+    let ok=dist<(t.landed||t.viaUnder?sz*1.5+10:tr?sz*2.5+15:sz*4+20);
+    if(!ok&&tr&&now-t.seen<=0.45){const pd=now-t.seen,pdist=Math.hypot(d.x+d.w/2-(t.x+t.w/2+(t.vx||0)*pd),d.y+d.h/2-(t.y+t.h/2+(t.vy||0)*pd));if(pdist<sz*2+15){ok=true;dist=pdist}}
+    if(ok&&tr){const g=now-t.seen,sp=Math.hypot(t.vx||0,t.vy||0),ex=sp*g;
+      if(ex>sz*0.8){const px=((d.x+d.w/2-t.x-t.w/2)*t.vx+(d.y+d.h/2-t.y-t.h/2)*t.vy)/sp;if(px<0.4*ex)ok=false}}
+    if(ok)pairs.push([dist,i,j])})});
   pairs.sort((a,b)=>a[0]-b[0]);const ut=new Set(),ud=new Set();
   for(const [dist,i,j] of pairs){if(ut.has(i)||ud.has(j))continue;ut.add(i);ud.add(j);const t=TR[i],d=bags[j],dt=Math.max(.001,now-t.seen);
-    if(dist>Math.max(0.02*W,0.6*Math.max(t.w,t.h)))t.moved=true;
-    t.rest=(img||dist<0.012*W||dist/dt<0.05*W)?t.rest+1:0;
-    t.x=d.x;t.y=d.y;t.w=d.w;t.h=d.h;t.p=d.p;t.hits++;t.seen=now;t.missN=0}
-  bags.forEach((d,j)=>{if(!ud.has(j))TR.push({id:nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,hits:1,seen:now,born:now,moved:false,missN:0,rest:img?2:0,state:'flight'})});
-  const AR=arenaBox(Z),NB=nearBox(Z),GAP=1.5,STILL=2.0;
-  for(const t of TR){if(t.state==='hole'||t.state==='gone')continue;
+    t.rest=(img||dist<0.012*W||dist/dt<0.05*W)?t.rest+1:0;t.path+=dist;
+    const ocx=t.x+t.w/2,ocy=t.y+t.h/2;
+    t.x=d.x;t.y=d.y;t.w=d.w;t.h=d.h;t.p=d.p;t.hits++;t.seen=now;t.missN=0;t.vx=(t.x+t.w/2-ocx)/dt;t.vy=(t.y+t.h/2-ocy)/dt;
+    const sz=Math.max(t.w,t.h);t.D=Math.hypot(t.x-t.ox,t.y-t.oy);t.str=t.D/(t.path+1e-9);
+    if(!t.fly&&((t.hits>=3&&t.D>=2.5*sz&&t.str>=0.6)||(t.hits>=2&&t.D>=4*sz)))t.fly=true}
+  bags.forEach((d,j)=>{if(ud.has(j))return;
+    const nt={id:nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,hits:1,seen:now,born:now,ox:d.x,oy:d.y,path:0,D:0,str:0,fly:false,missN:0,rest:img?2:0,state:'flight'};
+    const sz=Math.max(d.w,d.h),par=TR.filter(x=>!x.num&&!x.fly&&!x.landed&&x.state==='flight'&&x.hits<=4&&now-x.seen>0.001&&now-x.seen<0.9&&Math.hypot(d.x+d.w/2-x.x-x.w/2,d.y+d.h/2-x.y-x.h/2)<sz*6+40).sort((a,b)=>b.seen-a.seen)[0];
+    if(par){const jd=Math.hypot(d.x-par.x,d.y-par.y);nt.ox=par.ox;nt.oy=par.oy;nt.path=par.path+jd;nt.hits=par.hits+1;nt.D=Math.hypot(d.x-nt.ox,d.y-nt.oy);nt.str=nt.D/(nt.path+1e-9);
+      nt.vx=(d.x-par.x)/Math.max(.05,now-par.seen);nt.vy=(d.y-par.y)/Math.max(.05,now-par.seen);par.state='gone';par.prev='flight';
+      if((nt.hits>=3&&nt.D>=2.5*sz&&nt.str>=0.6)||(nt.hits>=2&&nt.D>=4*sz))nt.fly=true}
+    TR.push(nt)});
+  const AR=arenaBox(Z),NB=nearBox(Z),UB=underBox(Z),GAP=1.5;
+  for(const t of TR){if(t.state==='gone')continue;
     const miss=now-t.seen;
+    if(t.state==='hole'){if(t.viaUnder&&miss<=0.001)t.holeAt=now;continue}
     if(miss>0.001){
       t.missN++;
-      if(t.hits>=MINH&&t.missN>=2&&miss>=LOSS&&overHole(t)){t.state='hole';t.holeAt=now;assign(t,now)}
+      if(t.missN>=2&&miss>=LOSS&&(overHole(t)||willHole(t,miss))&&(t.hits>=MINH||now-lastAssign>=GAP)&&(t.num||nThrow<8)){t.state='hole';t.holeAt=now;assign(t,now)}
       else if((miss>HOLD&&t.missN>=2)||(t.hits<MINH&&miss>0.5&&t.missN>=1)){t.prev=t.state;t.state='gone'}
     }else if(t.hits>=MINH){
-      const cx0=t.x+t.w/2,cy0=t.y+t.h/2,inside=Z?inPoly(cx0,cy0,Z):false,inAr=inBox(AR,cx0,cy0),nearB=inBox(NB,cx0,cy0);
+      const cx0=t.x+t.w/2,cy0=t.y+t.h/2,inside=Z?inPoly(cx0,cy0,Z):false,inAr=inBox(AR,cx0,cy0),sz=Math.max(t.w,t.h);
       if(t.rest>=2)t.landed=true;
+      if(t.hits>=2&&t.rest>=2&&inBox(UB,cx0,cy0)){
+        t.state='hole';t.viaUnder=true;t.holeAt=now;
+        const sp=underSpots.find(u=>Math.hypot(u.cx-cx0,u.cy-cy0)<sz*1.5+10);
+        if(sp){t.num=sp.num;t.pl=sp.pl;t.bn=sp.bn}
+        else{if(!t.num&&!adopt(t,now,HOLD,sz*14+80))assign(t,now);if(t.num)underSpots.push({cx:cx0,cy:cy0,num:t.num,pl:t.pl,bn:t.bn})}
+        continue}
       if(!t.num){
-        if(t.landed&&nearB){if(!adopt(t,now,HOLD))assign(t,now)}
-        else if(t.moved&&inAr&&now-lastAssign>=GAP)assign(t,now);
+        if(t.fly&&(inAr||inside)&&now-lastAssign>=GAP){if(!adopt(t,now,HOLD,sz*10+60))assign(t,now)}
+        else if(t.landed&&inside){if(!adopt(t,now,HOLD,sz*14+80))assign(t,now)}
       }
       t.state=t.rest>=2?(inside?'on':'off'):(t.landed?'moving':'flight');
-      t.ignored=!t.num&&!t.moved&&!nearB&&now-t.born>=STILL;
+      t.cand=!t.num&&!t.fly&&t.hits>=2&&t.D>=1.5*sz&&t.str>=0.5&&t.state==='flight'&&(inAr||inside);
     }}
   TR=TR.filter(t=>t.state!=='gone'&&!(t.state==='hole'&&now-t.holeAt>HOLD));
 }
@@ -179,16 +202,19 @@ function render(){
   if(Z){ox.strokeStyle='#a78bfa';ox.setLineDash(corners.length===4?[]:[8,6]);ox.beginPath();Z.forEach((p,i)=>i?ox.lineTo(p.x,p.y):ox.moveTo(p.x,p.y));ox.closePath();ox.stroke();ox.setLineDash([])}
   if(holeBox){ox.strokeStyle='#fde047';ox.strokeRect(holeBox.x,holeBox.y,holeBox.w,holeBox.h)}
   if($('rawb').checked)lastDets.forEach(d=>{ox.strokeStyle=COL[((d.i%COL.length)+COL.length)%COL.length];ox.strokeRect(d.x,d.y,d.w,d.h)});
-  const AR=arenaBox(Z);
+  const AR=arenaBox(Z),drawn=new Set();let hk=0;
   for(const t of TR){
-    const cx0=t.x+t.w/2,cy0=t.y+t.h/2;
-    if(t.ignored){ox.strokeStyle='#52525b';ox.setLineDash([3,4]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);tag(t.x,t.y,'ignored (still)','#52525b');continue}
-    if(!t.num){ox.strokeStyle='#71717a';ox.setLineDash([3,4]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);continue}
-    const ins=Z?inPoly(cx0,cy0,Z):false;
+    if(!t.num)continue;
+    const cx0=t.x+t.w/2,cy0=t.y+t.h/2,ins=Z?inPoly(cx0,cy0,Z):false;
     if(t.state==='flight'&&!ins&&!inBox(AR,cx0,cy0))continue;
-    const col=PC[t.pl],held=lastNow-t.seen>0.001,key=t.state==='flight'?(ins?'moving':'flying'):t.state,stt=key==='flying'||key==='moving'?key:TXT[t.state];
-    ox.strokeStyle=SC[key];ox.lineWidth=Math.max(2,W/320)*(key==='hole'?1.6:1);if(held)ox.setLineDash([6,5]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);ox.lineWidth=Math.max(2,W/320);
-    tag(t.x,t.y,'P'+t.pl+'B'+t.bn+' '+stt+(held&&t.state!=='hole'?' (held)':''),col)}
+    let bx=t.x,by=t.y;
+    if(t.state==='hole'){if(drawn.has(t.num))continue;drawn.add(t.num);if(holeBox){bx=holeBox.x+holeBox.w/2-t.w/2;by=holeBox.y+holeBox.h/2-t.h/2}by-=hk*ox.measureText('M').width*1.8;hk++}
+    const col=PC[t.pl],held=lastNow-t.seen>0.001&&t.state!=='hole',key=t.state==='flight'?(ins?'moving':'flying'):t.state,stt=key==='flying'||key==='moving'?key:TXT[t.state];
+    ox.strokeStyle=SC[key];ox.lineWidth=Math.max(2,W/320)*(key==='hole'?1.6:1);if(held)ox.setLineDash([6,5]);ox.strokeRect(bx,by,t.w,t.h);ox.setLineDash([]);ox.lineWidth=Math.max(2,W/320);
+    tag(bx,by,'P'+t.pl+'B'+t.bn+' '+stt+(held?' (held)':''),col)}
+  const nl=nextLabel(),lt=throws[throws.length-1];
+  if(nl&&!(lt&&needsCheck(lt)&&lt.state==='flight')){const c=TR.filter(t=>t.cand&&!t.num).sort((a,b)=>b.D-a.D)[0];
+    if(c){ox.strokeStyle=SC.flying;ox.setLineDash([6,5]);ox.strokeRect(c.x,c.y,c.w,c.h);ox.setLineDash([]);tag(c.x,c.y,'P'+nl.pl+'B'+nl.bn+' flying?',PC[nl.pl])}}
   if(setup)corners.forEach((c,i)=>{ox.fillStyle='#a78bfa';ox.beginPath();ox.arc(c.x*W,c.y*H,Math.max(6,W/70),0,6.283);ox.fill();ox.fillStyle='#000';ox.fillText(String(i+1),c.x*W-4,c.y*H+5)});
 }
 function endSetup(){setup=false;O.style.pointerEvents='none';$('cset').textContent='Set board corners'}
