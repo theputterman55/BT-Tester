@@ -47,10 +47,10 @@ $('load').onclick=async()=>{
   }catch(e){sess=null;$('st').textContent='Could not load: '+(e.message||e)}
 };
 $('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;const u=URL.createObjectURL(f);
-  if(f.type.startsWith('image/')){const i=new Image();i.onload=()=>{img=i;$('v').style.display='none';fit(i.width,i.height);once(i)};i.src=u}
-  else{img=null;$('v').style.display='block';$('v').src=u}};
+  if(f.type.startsWith('image/')){const i=new Image();i.onload=()=>{img=i;$('v').style.display='none';O.style.position='static';fit(i.width,i.height);ox.drawImage(i,0,0,O.width,O.height);once(i)};i.src=u}
+  else{img=null;O.style.position='absolute';$('v').style.display='block';$('v').src=u}};
 const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true}),O=$('o'),ox=O.getContext('2d');
-function fit(w,h){O.width=w;O.height=h;O.style.width='100%';O.style.height='100%'}
+function fit(w,h){O.width=w;O.height=h;O.style.width='100%';O.style.height=img?'auto':'100%'}
 $('v').onloadedmetadata=()=>fit($('v').videoWidth,$('v').videoHeight);
 $('v').onplay=()=>{run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false};
 async function loop(){if(!run)return;await once($('v'));requestAnimationFrame(loop)}
@@ -68,7 +68,7 @@ async function once(src){
     let bx=null,lg=null;for(const k of outs){const t=r[k];const last=t.dims[t.dims.length-1];if(last===4&&!bx)bx=t;else lg=t}
     if(!bx||!lg){$('raw').textContent='Unexpected outputs: '+outs.map(k=>k+' '+r[k].dims).join(' | ');return}
     const Q=bx.dims[1],C=lg.dims[2],th=$('th').value/100,off=Number($('off').value),names=$('nm').value.split(',').map(s=>s.trim());
-    ox.clearRect(0,0,O.width,O.height);ox.lineWidth=Math.max(2,O.width/320);ox.font=Math.max(12,O.width/45)+'px system-ui';
+    ox.clearRect(0,0,O.width,O.height);if(img&&src===img)ox.drawImage(img,0,0,O.width,O.height);ox.lineWidth=Math.max(2,O.width/320);ox.font=Math.max(12,O.width/45)+'px system-ui';
     const cnt={},raw={};
     for(let q=0;q<Q;q++){let best=-1,bs=-1e9;for(let c=0;c<C;c++){const v=lg.data[q*C+c];if(v>bs){bs=v;best=c}}
       const p=1/(1+Math.exp(-bs));if(p<th)continue;
