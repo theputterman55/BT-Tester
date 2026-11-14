@@ -58,7 +58,7 @@ $('load').onclick=async()=>{
   $('st').textContent='Ready. Input '+size+'px. Outputs: '+outs.join(', ');
   }catch(e){sess=null;$('st').textContent='Could not load: '+(e.message||e)}
 };
-$('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;resetTracker();corners=[];const u=URL.createObjectURL(f);
+$('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;resetTracker();corners=[];endSetup();cornerHint();const u=URL.createObjectURL(f);
   if(f.type.startsWith('image/')){const i=new Image();i.onload=()=>{img=i;$('v').style.display='none';O.style.position='static';fit(i.width,i.height);ox.drawImage(i,0,0,O.width,O.height);once(i)};i.src=u}
   else{img=null;O.style.position='absolute';$('v').style.display='block';$('v').src=u}};
 const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true}),O=$('o'),ox=O.getContext('2d');
@@ -86,16 +86,22 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     for(const j of [15,16]){if(!p[j])continue;ox.fillStyle='#f43f5e';ox.beginPath();ox.arc(p[j].x*W,p[j].y*H,Math.max(4,W/110),0,6.283);ox.fill()}
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
-let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false;
-const TXT={flight:'flying',on:'on board',off:'off board',hole:'in hole'},PC={1:'#60a5fa',2:'#f59e0b'};
-function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];showTr()}
+let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false,lastAssign=-99;
+const TXT={flight:'moving',on:'on board',off:'off board',hole:'in hole'},PC={1:'#60a5fa',2:'#f59e0b'};
+function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];lastAssign=-99;showTr()}
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
 function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
 function ordered(P){const cx=P.reduce((s,p)=>s+p.x,0)/P.length,cy=P.reduce((s,p)=>s+p.y,0)/P.length;return P.slice().sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx))}
 function zone(W,H){if(corners.length===4)return ordered(corners.map(c=>({x:c.x*W,y:c.y*H})));if(boardBox){const b=boardBox;return [{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}return null}
-function nearHole(t){if(!holeBox)return false;const h=holeBox,mx=h.w*0.4,my=h.h*0.6,cx=t.x+t.w/2,cy=t.y+t.h/2;return cx>h.x-mx&&cx<h.x+h.w+mx&&cy>h.y-my&&cy<h.y+h.h+my}
-function assign(t){if(t.num||nThrow>=8)return;nThrow++;t.num=nThrow;const f=Number($('first').value);t.pl=nThrow%2===1?f:3-f;t.bn=Math.ceil(nThrow/2);throws.push(t)}
+function overHole(t){if(!holeBox)return false;const h=holeBox,cx=t.x+t.w/2,cy=t.y+t.h/2,mx=h.w*0.15,my=h.h*0.25;
+  if(cx>h.x-mx&&cx<h.x+h.w+mx&&cy>h.y-my&&cy<h.y+h.h+my)return true;
+  const ox1=Math.max(t.x,h.x),oy1=Math.max(t.y,h.y),ox2=Math.min(t.x+t.w,h.x+h.w),oy2=Math.min(t.y+t.h,h.y+h.h);
+  return Math.max(0,ox2-ox1)*Math.max(0,oy2-oy1)>=0.35*t.w*t.h}
+function arenaBox(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;return {x:x0-0.15*w,y:y0-1.2*h,w:w*1.3,h:h*2.2}}
+function adopt(t,now,HOLD){const o=TR.filter(x=>x!==t&&x.num&&!x.landed&&x.state==='flight'&&now-x.seen>0.001&&now-x.seen<HOLD).sort((a,b)=>b.seen-a.seen)[0];
+  if(!o)return false;t.num=o.num;t.pl=o.pl;t.bn=o.bn;const i=throws.indexOf(o);if(i>=0)throws[i]=t;o.state='gone';o.prev='flight';return true}
+function assign(t,now){if(t.num||nThrow>=8)return;lastAssign=now;nThrow++;t.num=nThrow;const f=Number($('first').value);t.pl=nThrow%2===1?f:3-f;t.bn=Math.ceil(nThrow/2);throws.push(t)}
 function track(dets,now,W,H){
   if(lastNow>=0&&now<lastNow-0.05)resetTracker();
   lastNow=now;
@@ -109,16 +115,21 @@ function track(dets,now,W,H){
     t.rest=(img||dist<0.012*W||dist/dt<0.05*W)?t.rest+1:0;
     t.x=d.x;t.y=d.y;t.w=d.w;t.h=d.h;t.p=d.p;t.hits++;t.seen=now;t.missN=0}
   bags.forEach((d,j)=>{if(!ud.has(j))TR.push({id:nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,hits:1,seen:now,missN:0,rest:img?2:0,state:'flight'})});
+  const AR=arenaBox(Z),GAP=1.5;
   for(const t of TR){if(t.state==='hole'||t.state==='gone')continue;
     const miss=now-t.seen;
     if(miss>0.001){
       t.missN++;
-      if(t.hits>=MINH&&t.missN>=2&&miss>=LOSS&&nearHole(t)){t.state='hole';t.holeAt=now;assign(t)}
+      if(t.hits>=MINH&&t.missN>=2&&miss>=LOSS&&overHole(t)){t.state='hole';t.holeAt=now;assign(t,now)}
       else if((miss>HOLD&&t.missN>=2)||(t.hits<MINH&&miss>0.5&&t.missN>=1)){t.prev=t.state;t.state='gone'}
     }else if(t.hits>=MINH){
-      const inside=Z?inPoly(t.x+t.w/2,t.y+t.h/2,Z):false;
-      if(t.rest>=2)assign(t);
-      t.state=(t.rest>=2||t.num)?(inside?'on':'off'):'flight';
+      const cx0=t.x+t.w/2,cy0=t.y+t.h/2,inside=Z?inPoly(cx0,cy0,Z):false,inAr=AR&&cx0>AR.x&&cx0<AR.x+AR.w&&cy0>AR.y&&cy0<AR.y+AR.h;
+      if(t.rest>=2)t.landed=true;
+      if(!t.num){
+        if(t.landed){if(!adopt(t,now,HOLD)&&inAr)assign(t,now)}
+        else if(inAr&&now-lastAssign>=GAP)assign(t,now);
+      }
+      t.state=t.landed?(inside?'on':'off'):'flight';
     }}
   TR=TR.filter(t=>t.state!=='gone'&&!(t.state==='hole'&&now-t.holeAt>HOLD));
 }
@@ -144,18 +155,18 @@ function render(){
   const MINH=img?1:2;
   for(const t of TR){
     if(t.hits<MINH){ox.strokeStyle='#71717a';ox.setLineDash([3,4]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);continue}
-    const col=t.num?PC[t.pl]:'#e4e4e7',held=lastNow-t.seen>0.001;
+    const col=t.num?PC[t.pl]:'#e4e4e7',held=lastNow-t.seen>0.001,ins=Z?inPoly(t.x+t.w/2,t.y+t.h/2,Z):false,stt=t.state==='hole'?'IN HOLE':t.state==='flight'?(ins?'moving':'flying'):TXT[t.state];
     ox.strokeStyle=col;if(held)ox.setLineDash([6,5]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);
-    tag(t.x,t.y,(t.num?'P'+t.pl+'B'+t.bn:'bag')+' '+(t.state==='hole'?'IN HOLE':TXT[t.state])+(held&&t.state!=='hole'?' (held)':''),t.state==='hole'?'#4ade80':col)}
+    tag(t.x,t.y,(t.num?'P'+t.pl+'B'+t.bn:'bag')+' '+stt+(held&&t.state!=='hole'?' (held)':''),t.state==='hole'?'#4ade80':col)}
   if(setup)corners.forEach((c,i)=>{ox.fillStyle='#a78bfa';ox.beginPath();ox.arc(c.x*W,c.y*H,Math.max(6,W/70),0,6.283);ox.fill();ox.fillStyle='#000';ox.fillText(String(i+1),c.x*W-4,c.y*H+5)});
 }
-$('cset').onclick=()=>{setup=!setup;O.style.pointerEvents=setup?'auto':'none';if(setup)$('v').pause();
-  $('cset').textContent=setup?'Done with corners':'Set board corners';
-  $('chint').textContent=setup?'Tap the 4 board corners on the picture, any order. After 4, tapping moves the nearest corner.':(corners.length===4?'Board corners set. Bags count as on board when their center is inside the purple shape.':'Until you set 4 corners, the zone is the plain box around the board (dashed).');render()};
-$('cclr').onclick=()=>{corners=[];$('chint').textContent='Corners cleared. Using the plain board box (dashed).';render()};
+function endSetup(){setup=false;O.style.pointerEvents='none';$('cset').textContent='Set board corners'}
+function cornerHint(){$('chint').textContent=setup?(corners.length<4?corners.length+' of 4 corners set. Tap the next corner on the picture.':'4 of 4 corners set. Tap near a corner to move it, then press Done with corners.'):(corners.length===4?'4 of 4 corners set. Bags count as on board inside the purple shape.':'No corners set. Using the plain box around the board (dashed).')}
+$('cset').onclick=()=>{if(setup){endSetup()}else{setup=true;O.style.pointerEvents='auto';$('v').pause();$('cset').textContent='Done with corners'}cornerHint();render()};
+$('cclr').onclick=()=>{corners=[];cornerHint();render()};
 O.addEventListener('click',e=>{if(!setup)return;const r=O.getBoundingClientRect(),p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
-  if(corners.length<4)corners.push(p);else{let bi=0,bd=1e9;corners.forEach((c,i)=>{const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;bi=i}});corners[bi]=p}
-  render()});
+  if(corners.length<4){corners.push(p);if(corners.length===4)endSetup()}else{let bi=0,bd=1e9;corners.forEach((c,i)=>{const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;bi=i}});corners[bi]=p}
+  cornerHint();render()});
 $('rst').onclick=()=>{resetTracker();render()};
 $('rawb').onchange=()=>render();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
