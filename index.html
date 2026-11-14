@@ -40,7 +40,9 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div class="card"><div class="l">Step through (reads every frame in order)</div>
 <div class="row"><button class="b s" id="step1">Step once</button><button class="b s" id="auto">Step through video</button></div>
 <div class="row" style="margin-top:8px"><div><div class="l">Step seconds</div><input id="dt" type="number" step="0.05" value="0.2"></div><button class="b s" id="rst">New round (reset)</button></div></div>
-<div class="card"><div class="l">Tracker</div><div id="tr" style="font-size:13px;color:#d4d4d8">Play or step a video to start.</div></div>
+<div class="card"><div class="l">Tracker</div><div id="tr" style="font-size:13px;color:#d4d4d8">Play or step a video to start.</div>
+<button class="b s" id="finbtn" style="margin-top:10px">Finish round (check throws)</button></div>
+<div id="fin" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:50;padding:16px;overflow:auto"><div class="card" style="max-width:460px;margin:20px auto"><div class="l">Round check</div><div id="finb" style="font-size:13px;color:#d4d4d8"></div><div class="row" style="margin-top:12px"><button class="b s" id="finok">Apply answers</button><button class="b s" id="finx">Close</button></div></div></div>
 <div class="card" style="margin-top:12px"><div class="l">What the model found (raw class numbers)</div><div id="raw" style="font-size:12px;color:#d4d4d8">Play a video to see.</div></div>
 <script>
 const $=id=>document.getElementById(id);let sess=null,inName,outs,size=512,busy=false,run=false,img=null;
@@ -64,7 +66,7 @@ $('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;resetTracker();corne
 const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true}),O=$('o'),ox=O.getContext('2d');
 function fit(w,h){O.width=w;O.height=h;if(img){O.style.width='auto';O.style.height='auto'}else{O.style.width='100%';O.style.height='100%'}}
 $('v').onloadedmetadata=()=>fit($('v').videoWidth,$('v').videoHeight);
-$('v').onplay=()=>{stepping=false;run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false};
+$('v').onplay=()=>{stepping=false;run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false;if(throws.length)openFinish()};
 async function loop(){if(!run)return;await once($('v'));requestAnimationFrame(loop)}
 let pl=null;
 const BASE='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision';
@@ -87,7 +89,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false,lastAssign=-99;
-const TXT={flight:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole'},PC={1:'#60a5fa',2:'#f59e0b'},SC={flying:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff'};
+const TXT={flight:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',air:'airmail / off the back'},PC={1:'#60a5fa',2:'#f59e0b'},SC={flying:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff'};
 function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];lastAssign=-99;showTr()}
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -137,16 +139,37 @@ function track(dets,now,W,H){
     }}
   TR=TR.filter(t=>t.state!=='gone'&&!(t.state==='hole'&&now-t.holeAt>HOLD));
 }
+function needsCheck(t){return !t.manual&&!t.landed&&t.state!=='hole'}
+function unfinished(t){return needsCheck(t)&&(t.state==='gone'||throws.some(x=>x.num>t.num))}
+function nextLabel(){const n=nThrow+1;if(n>8)return null;const f=Number($('first').value);return {pl:n%2===1?f:3-f,bn:Math.ceil(n/2)}}
 function showTr(){
-  const S=t=>{const x=t.state==='gone'?t.prev:t.state;return x==='moving'?'on':x};
+  const S=t=>{if(t.manual)return t.manual;const x=t.state==='gone'?t.prev:t.state;return x==='moving'?'on':x};
   const tl={1:{hole:0,on:0,off:0},2:{hole:0,on:0,off:0}};
   throws.forEach(t=>{const s=S(t);if(tl[t.pl]&&tl[t.pl][s]!==undefined)tl[t.pl][s]++});
   const pt=p=>tl[p].hole*3+tl[p].on,net=pt(1)-pt(2);
-  const rows=throws.slice().sort((a,b)=>a.num-b.num).map(t=>'<div>'+t.num+'. P'+t.pl+'B'+t.bn+' — '+(TXT[S(t)]||'?')+(t.state==='gone'?' (picked up)':'')+'</div>').join('');
-  $('tr').innerHTML='<div><b>Throws seen:</b> '+throws.length+' of 8</div>'+rows+
+  const rows=throws.slice().sort((a,b)=>a.num-b.num).map(t=>{let w;
+    if(t.manual)w=TXT[t.manual]+' (you entered)';
+    else if(unfinished(t))w='airmail / off the back? (check at round end)';
+    else if(needsCheck(t))w='in the air';
+    else w=(TXT[S(t)]||'?')+(t.state==='gone'?' (picked up)':'');
+    return '<div>'+t.num+'. P'+t.pl+'B'+t.bn+' — '+w+'</div>'}).join('');
+  const last=throws[throws.length-1],nx=nextLabel();let now;
+  if(last&&needsCheck(last)&&last.state!=='gone')now='<b style="color:'+PC[last.pl]+'">Now throwing: P'+last.pl+'B'+last.bn+'</b> (in the air)';
+  else now=(last?'Last: P'+last.pl+'B'+last.bn+'. ':'')+(nx?'<b style="color:'+PC[nx.pl]+'">Next up: P'+nx.pl+'B'+nx.bn+'</b>':'Round complete');
+  $('tr').innerHTML='<div>'+now+'</div><div style="margin-top:6px"><b>Throws seen:</b> '+throws.length+' of 8</div>'+rows+
    [1,2].map(p=>'<div style="margin-top:6px"><b style="color:'+PC[p]+'">Player '+p+':</b> '+tl[p].hole+' in hole, '+tl[p].on+' on board, '+tl[p].off+' off → '+pt(p)+' pts</div>').join('')+
    '<div style="margin-top:6px"><b>Net:</b> '+(net===0?'tied':'Player '+(net>0?1:2)+' +'+Math.abs(net))+'</div>';
 }
+function openFinish(){
+  const nc=throws.filter(needsCheck);let h='<div>Throws seen: '+throws.length+' of 8.</div>';
+  if(!nc.length)h+='<div style="margin-top:8px">Every throw was seen landing or dropping in the hole. Nothing to check.</div>';
+  else{h+='<div style="margin:8px 0">These throws were never seen landing or dropping in the hole. Was there an airmail? Type what happened: hole, board, off or airmail.</div>';
+    nc.forEach(t=>{h+='<div style="margin-bottom:8px"><span style="color:'+PC[t.pl]+';font-weight:800">P'+t.pl+'B'+t.bn+'</span><input class="fa" data-n="'+t.num+'" placeholder="hole, board, off or airmail" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px;margin-top:4px"></div>'})}
+  $('finb').innerHTML=h;$('fin').style.display='block'}
+$('finbtn').onclick=openFinish;$('finx').onclick=()=>{$('fin').style.display='none'};
+$('finok').onclick=()=>{document.querySelectorAll('.fa').forEach(i=>{const v=i.value.toLowerCase(),t=throws.find(x=>String(x.num)===i.dataset.n);if(!t||!v)return;
+  t.manual=/air|back|miss/.test(v)?'air':/hole|in/.test(v)?'hole':/off/.test(v)?'off':/board|on|rest/.test(v)?'on':t.manual});
+  $('fin').style.display='none';showTr()};
 function tag(x,y,t,col){const m=ox.measureText('M').width;ox.fillStyle=col;ox.fillRect(x,Math.max(0,y-m*1.7),ox.measureText(t).width+8,m*1.7);ox.fillStyle='#000';ox.fillText(t,x+4,Math.max(m*1.3,y-4))}
 function render(){
   if(!O.width)return;
@@ -187,9 +210,9 @@ $('step1').onclick=async()=>{if(!sess){$('raw').textContent='Load the model firs
 $('auto').onclick=async()=>{
   if(stepping){stepping=false;return}
   if(!sess){$('raw').textContent='Load the model first.';return}
-  stepping=true;$('auto').textContent='Stop stepping';
-  while(stepping){if(!(await stepOnce()))break}
-  stepping=false;$('auto').textContent='Step through video'};
+  stepping=true;$('auto').textContent='Stop stepping';let natural=false;
+  while(stepping){if(!(await stepOnce())){natural=stepping;break}}
+  stepping=false;$('auto').textContent='Step through video';if(natural&&throws.length)openFinish()};
 async function once(src){
   if(!sess||busy)return;busy=true;
   try{
