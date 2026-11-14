@@ -87,7 +87,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false,lastAssign=-99;
-const TXT={flight:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole'},PC={1:'#60a5fa',2:'#f59e0b'};
+const TXT={flight:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole'},PC={1:'#60a5fa',2:'#f59e0b'},SC={flying:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff'};
 function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];lastAssign=-99;showTr()}
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -163,9 +163,9 @@ function render(){
     if(!t.num){ox.strokeStyle='#71717a';ox.setLineDash([3,4]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);continue}
     const ins=Z?inPoly(cx0,cy0,Z):false;
     if(t.state==='flight'&&!ins&&!inBox(AR,cx0,cy0))continue;
-    const col=PC[t.pl],held=lastNow-t.seen>0.001,stt=t.state==='flight'?(ins?'moving':'flying'):TXT[t.state];
-    ox.strokeStyle=col;if(held)ox.setLineDash([6,5]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);
-    tag(t.x,t.y,'P'+t.pl+'B'+t.bn+' '+stt+(held&&t.state!=='hole'?' (held)':''),t.state==='hole'?'#4ade80':col)}
+    const col=PC[t.pl],held=lastNow-t.seen>0.001,key=t.state==='flight'?(ins?'moving':'flying'):t.state,stt=key==='flying'||key==='moving'?key:TXT[t.state];
+    ox.strokeStyle=SC[key];ox.lineWidth=Math.max(2,W/320)*(key==='hole'?1.6:1);if(held)ox.setLineDash([6,5]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);ox.lineWidth=Math.max(2,W/320);
+    tag(t.x,t.y,'P'+t.pl+'B'+t.bn+' '+stt+(held&&t.state!=='hole'?' (held)':''),col)}
   if(setup)corners.forEach((c,i)=>{ox.fillStyle='#a78bfa';ox.beginPath();ox.arc(c.x*W,c.y*H,Math.max(6,W/70),0,6.283);ox.fill();ox.fillStyle='#000';ox.fillText(String(i+1),c.x*W-4,c.y*H+5)});
 }
 function endSetup(){setup=false;O.style.pointerEvents='none';$('cset').textContent='Set board corners'}
