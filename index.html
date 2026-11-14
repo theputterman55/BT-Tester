@@ -127,14 +127,14 @@ function track(dets,now,W,H){
     t.rest=(img||dist<0.012*W||dist/dt<0.05*W)?t.rest+1:0;t.path+=dist;
     const ocx=t.x+t.w/2,ocy=t.y+t.h/2;
     t.x=d.x;t.y=d.y;t.w=d.w;t.h=d.h;t.p=d.p;t.hits++;t.seen=now;t.missN=0;t.vx=(t.x+t.w/2-ocx)/dt;t.vy=(t.y+t.h/2-ocy)/dt;
-    const sz=Math.max(t.w,t.h);t.D=Math.hypot(t.x-t.ox,t.y-t.oy);t.str=t.D/(t.path+1e-9);
+    const sz=Math.min(t.w,t.h);t.D=Math.hypot(t.x-t.ox,t.y-t.oy);t.str=t.D/(t.path+1e-9);
     if(!t.fly&&((t.hits>=3&&t.D>=2.5*sz&&t.str>=0.6)||(t.hits>=2&&t.D>=4*sz)))t.fly=true}
   bags.forEach((d,j)=>{if(ud.has(j))return;
     const nt={id:nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,hits:1,seen:now,born:now,ox:d.x,oy:d.y,path:0,D:0,str:0,fly:false,missN:0,rest:img?2:0,state:'flight'};
     const sz=Math.max(d.w,d.h),par=TR.filter(x=>!x.num&&!x.fly&&!x.landed&&x.state==='flight'&&x.hits<=4&&now-x.seen>0.001&&now-x.seen<0.9&&Math.hypot(d.x+d.w/2-x.x-x.w/2,d.y+d.h/2-x.y-x.h/2)<sz*6+40).sort((a,b)=>b.seen-a.seen)[0];
     if(par){const jd=Math.hypot(d.x-par.x,d.y-par.y);nt.ox=par.ox;nt.oy=par.oy;nt.path=par.path+jd;nt.hits=par.hits+1;nt.D=Math.hypot(d.x-nt.ox,d.y-nt.oy);nt.str=nt.D/(nt.path+1e-9);
       nt.vx=(d.x-par.x)/Math.max(.05,now-par.seen);nt.vy=(d.y-par.y)/Math.max(.05,now-par.seen);par.state='gone';par.prev='flight';
-      if((nt.hits>=3&&nt.D>=2.5*sz&&nt.str>=0.6)||(nt.hits>=2&&nt.D>=4*sz))nt.fly=true}
+      const ms=Math.min(d.w,d.h);if((nt.hits>=3&&nt.D>=2.5*ms&&nt.str>=0.6)||(nt.hits>=2&&nt.D>=4*ms))nt.fly=true}
     TR.push(nt)});
   const AR=arenaBox(Z),NB=nearBox(Z),UB=underBox(Z),GAP=1.5;
   for(const t of TR){if(t.state==='gone')continue;
@@ -158,7 +158,7 @@ function track(dets,now,W,H){
         else if(t.landed&&inside){if(!adopt(t,now,HOLD,sz*14+80))assign(t,now)}
       }
       t.state=t.rest>=2?(inside?'on':'off'):(t.landed?'moving':'flight');
-      t.cand=!t.num&&!t.fly&&t.hits>=2&&t.D>=1.5*sz&&t.str>=0.5&&t.state==='flight'&&(inAr||inside);
+      t.cand=!t.num&&!t.fly&&t.hits>=2&&t.D>=1.5*Math.min(t.w,t.h)&&t.str>=0.5&&t.state==='flight'&&(inAr||inside);
     }}
   TR=TR.filter(t=>t.state!=='gone'&&!(t.state==='hole'&&now-t.holeAt>HOLD));
 }
