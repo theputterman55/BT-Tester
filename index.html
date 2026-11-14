@@ -27,7 +27,8 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div class="row"><div><div class="l">Confidence</div><input id="th" type="range" min="5" max="95" value="40"><div id="thv" style="font-size:12px;color:#a1a1aa">0.40</div></div>
 <div><div class="l">Class numbering</div><select id="off"><option value="0">starts at 0</option><option value="1">starts at 1</option></select></div></div>
 <div class="row" style="margin-top:8px"><div><div class="l">Names in order</div><input id="nm" value="bag,board,hole" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px"></div>
-<div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div></div>
+<div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div>
+<div style="margin-top:10px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="pose"> Show players (body points)</label> <span id="pst" style="font-size:12px;color:#a1a1aa;margin-left:8px"></span></div></div>
 <div class="wrap"><video id="v" playsinline muted controls></video><canvas id="o"></canvas></div>
 <div class="k" id="k"><span>No model yet</span></div>
 <div class="card" style="margin-top:12px"><div class="l">What the model found (raw class numbers)</div><div id="raw" style="font-size:12px;color:#d4d4d8">Play a video to see.</div></div>
@@ -55,6 +56,26 @@ function fit(w,h){O.width=w;O.height=h;if(img){O.style.width='auto';O.style.heig
 $('v').onloadedmetadata=()=>fit($('v').videoWidth,$('v').videoHeight);
 $('v').onplay=()=>{run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false};
 async function loop(){if(!run)return;await once($('v'));requestAnimationFrame(loop)}
+let pl=null;
+const BASE='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision';
+$('pose').onchange=async()=>{
+  if(!$('pose').checked)return;
+  if(!pl){try{$('pst').textContent='Loading body model...';
+    const m=await import(BASE+'/vision_bundle.mjs');
+    const fs=await m.FilesetResolver.forVisionTasks(BASE+'/wasm');
+    pl=await m.PoseLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'},runningMode:'VIDEO',numPoses:4});
+    $('pst').textContent='Body model ready';
+  }catch(e){pl=null;$('pose').checked=false;$('pst').textContent='Could not load body model: '+(e.message||e)}}
+  if(pl&&img)once(img);
+};
+function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,16],[11,12],[11,23],[12,24],[23,24]];
+  ox.font=Math.max(12,W/45)+'px system-ui';
+  ps.slice().sort((a,b)=>a[0].x-b[0].x).forEach((p,i)=>{
+    ox.strokeStyle='#fff';ox.lineWidth=Math.max(2,W/320);
+    for(const [a,b] of L){if(!p[a]||!p[b])continue;ox.beginPath();ox.moveTo(p[a].x*W,p[a].y*H);ox.lineTo(p[b].x*W,p[b].y*H);ox.stroke()}
+    for(const j of [15,16]){if(!p[j])continue;ox.fillStyle='#f43f5e';ox.beginPath();ox.arc(p[j].x*W,p[j].y*H,Math.max(4,W/110),0,6.283);ox.fill()}
+    ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
+  });}
 let tm=[],hist={};
 async function once(src){
   if(!sess||busy)return;busy=true;
@@ -79,8 +100,10 @@ async function once(src){
       const col=COL[((nmi%COL.length)+COL.length)%COL.length];ox.strokeStyle=col;ox.fillStyle=col;ox.strokeRect(x,y,ww,hh);
       const tx=nm+' '+Math.round(p*100);ox.fillRect(x,Math.max(0,y-ox.measureText('M').width*1.7),ox.measureText(tx).width+8,ox.measureText('M').width*1.7);
       ox.fillStyle='#000';ox.fillText(tx,x+4,Math.max(ox.measureText('M').width*1.3,y-4));}
+    let np=null,pms=0;
+    if($('pose').checked&&pl){try{const t1=performance.now();const pr=pl.detectForVideo(src,performance.now());pms=performance.now()-t1;const ps=pr.landmarks||[];np=ps.length;drawPose(ps)}catch(e){$('pst').textContent='Body error: '+(e.message||e)}}
     tm.push(ms);if(tm.length>20)tm.shift();const avg=tm.reduce((a,b)=>a+b,0)/tm.length;
-    $('k').innerHTML=Object.entries(cnt).map(([k,v])=>'<span>'+k+': '+v+'</span>').join('')+'<span>'+Math.round(avg)+' ms/frame</span><span>'+(1000/avg).toFixed(1)+' fps</span><span>'+S+'px</span><span>'+C+' model classes</span>';
+    $('k').innerHTML=Object.entries(cnt).map(([k,v])=>'<span>'+k+': '+v+'</span>').join('')+'<span>'+Math.round(avg)+' ms/frame</span><span>'+(1000/avg).toFixed(1)+' fps</span><span>'+S+'px</span><span>'+C+' model classes</span>'+(np!==null?'<span>'+np+' people</span><span>'+Math.round(pms)+' ms body</span>':'');
     $('raw').textContent=Object.keys(raw).length?'Class numbers seen this frame: '+Object.entries(raw).map(([k,v])=>k+' x'+v).join(', ')+'. If the names look swapped, change Class numbering.':'Nothing above the confidence line. Lower Confidence.';
   }catch(e){$('raw').textContent='Error: '+(e.message||e)}finally{busy=false}
 }
