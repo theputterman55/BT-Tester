@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>BT Tester</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#000;color:#fff;font:15px/1.4 system-ui,sans-serif;padding:14px 14px 40px}
+h1{font-size:20px;margin:4px 0 2px}p.s{color:#a1a1aa;font-size:13px;margin:0 0 14px}
+.card{background:#18181b;border:1px solid #27272a;border-radius:14px;padding:12px;margin-bottom:12px}
+.l{font-size:11px;font-weight:900;font-style:italic;text-transform:uppercase;letter-spacing:.14em;color:#a1a1aa;margin-bottom:6px}
+input[type=file]{width:100%;color:#d4d4d8;font-size:13px}
+.b{display:block;margin:10px auto 0;width:50%;height:44px;border-radius:12px;background:transparent;border:2px solid #2dd4bf;color:#2dd4bf;font-weight:900;font-size:14px}
+.b:disabled{opacity:.4}
+#st{font-size:13px;color:#d4d4d8;min-height:20px}
+.wrap{position:relative;width:100%;background:#09090b;border-radius:12px;overflow:hidden}
+video,canvas#o{display:block;width:100%}canvas#o{position:absolute;left:0;top:0;pointer-events:none}
+.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}
+select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px}
+.k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
+</style></head><body>
+<h1>BT Tester</h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
+<button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
+<div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
+<div class="card"><div class="l">Settings</div>
+<div class="row"><div><div class="l">Confidence</div><input id="th" type="range" min="5" max="95" value="40"><div id="thv" style="font-size:12px;color:#a1a1aa">0.40</div></div>
+<div><div class="l">Class numbering</div><select id="off"><option value="0">starts at 0</option><option value="1">starts at 1</option></select></div></div>
+<div class="row" style="margin-top:8px"><div><div class="l">Names in order</div><input id="nm" value="bag,board,hole" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px"></div>
+<div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div></div>
+<div class="wrap"><video id="v" playsinline muted controls></video><canvas id="o"></canvas></div>
+<div class="k" id="k"><span>No model yet</span></div>
+<div class="card" style="margin-top:12px"><div class="l">What the model found (raw class numbers)</div><div id="raw" style="font-size:12px;color:#d4d4d8">Play a video to see.</div></div>
+<script>
+const $=id=>document.getElementById(id);let sess=null,inName,outs,size=512,busy=false,run=false,img=null;
+const COL=['#2dd4bf','#f59e0b','#f43f5e','#a78bfa','#60a5fa'];
+$('th').oninput=()=>$('thv').textContent=($('th').value/100).toFixed(2);
+$('mf').onchange=()=>{$('load').disabled=!$('mf').files[0]};
+$('load').onclick=async()=>{
+  try{$('st').textContent='Reading model...';const buf=await $('mf').files[0].arrayBuffer();
+  $('st').textContent='Starting model...';
+  ort.env.wasm.numThreads=Math.min(4,navigator.hardwareConcurrency||2);
+  sess=await ort.InferenceSession.create(buf,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  inName=sess.inputNames[0];outs=sess.outputNames;
+  let sh=null;try{sh=sess.inputMetadata?.[inName]?.shape||sess.inputMetadata?.[0]?.shape}catch(e){}
+  if(sh&&typeof sh[2]==='number'&&sh[2]>0)size=sh[2];
+  $('st').textContent='Ready. Input '+size+'px. Outputs: '+outs.join(', ');
+  }catch(e){sess=null;$('st').textContent='Could not load: '+(e.message||e)}
+};
+$('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;const u=URL.createObjectURL(f);
+  if(f.type.startsWith('image/')){const i=new Image();i.onload=()=>{img=i;$('v').style.display='none';fit(i.width,i.height);once(i)};i.src=u}
+  else{img=null;$('v').style.display='block';$('v').src=u}};
+const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true}),O=$('o'),ox=O.getContext('2d');
+function fit(w,h){O.width=w;O.height=h;O.style.width='100%';O.style.height='100%'}
+$('v').onloadedmetadata=()=>fit($('v').videoWidth,$('v').videoHeight);
+$('v').onplay=()=>{run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false};
+async function loop(){if(!run)return;await once($('v'));requestAnimationFrame(loop)}
+let tm=[],hist={};
+async function once(src){
+  if(!sess||busy)return;busy=true;
+  try{
+    const W=src.videoWidth||src.width,H=src.videoHeight||src.height,S=Number($('sz').value)||size;
+    if(!W)return;cv.width=S;cv.height=S;cx.drawImage(src,0,0,S,S);
+    const d=cx.getImageData(0,0,S,S).data,n=S*S,f=new Float32Array(3*n),m=[0.485,0.456,0.406],sd=[0.229,0.224,0.225];
+    for(let i=0;i<n;i++){for(let c=0;c<3;c++)f[c*n+i]=(d[i*4+c]/255-m[c])/sd[c]}
+    const t0=performance.now();
+    const r=await sess.run({[inName]:new ort.Tensor('float32',f,[1,3,S,S])});
+    const ms=performance.now()-t0;
+    let bx=null,lg=null;for(const k of outs){const t=r[k];const last=t.dims[t.dims.length-1];if(last===4&&!bx)bx=t;else lg=t}
+    if(!bx||!lg){$('raw').textContent='Unexpected outputs: '+outs.map(k=>k+' '+r[k].dims).join(' | ');return}
+    const Q=bx.dims[1],C=lg.dims[2],th=$('th').value/100,off=Number($('off').value),names=$('nm').value.split(',').map(s=>s.trim());
+    ox.clearRect(0,0,O.width,O.height);ox.lineWidth=Math.max(2,O.width/320);ox.font=Math.max(12,O.width/45)+'px system-ui';
+    const cnt={},raw={};
+    for(let q=0;q<Q;q++){let best=-1,bs=-1e9;for(let c=0;c<C;c++){const v=lg.data[q*C+c];if(v>bs){bs=v;best=c}}
+      const p=1/(1+Math.exp(-bs));if(p<th)continue;
+      const cxn=bx.data[q*4],cyn=bx.data[q*4+1],w=bx.data[q*4+2],h=bx.data[q*4+3];
+      const x=(cxn-w/2)*O.width,y=(cyn-h/2)*O.height,ww=w*O.width,hh=h*O.height;
+      const nmi=best-off,nm=names[nmi]||('#'+best);raw[best]=(raw[best]||0)+1;cnt[nm]=(cnt[nm]||0)+1;
+      const col=COL[((nmi%COL.length)+COL.length)%COL.length];ox.strokeStyle=col;ox.fillStyle=col;ox.strokeRect(x,y,ww,hh);
+      const tx=nm+' '+Math.round(p*100);ox.fillRect(x,Math.max(0,y-ox.measureText('M').width*1.7),ox.measureText(tx).width+8,ox.measureText('M').width*1.7);
+      ox.fillStyle='#000';ox.fillText(tx,x+4,Math.max(ox.measureText('M').width*1.3,y-4));}
+    tm.push(ms);if(tm.length>20)tm.shift();const avg=tm.reduce((a,b)=>a+b,0)/tm.length;
+    $('k').innerHTML=Object.entries(cnt).map(([k,v])=>'<span>'+k+': '+v+'</span>').join('')+'<span>'+Math.round(avg)+' ms/frame</span><span>'+(1000/avg).toFixed(1)+' fps</span><span>'+S+'px</span>';
+    $('raw').textContent=Object.keys(raw).length?'Class numbers seen this frame: '+Object.entries(raw).map(([k,v])=>k+' x'+v).join(', ')+'. If the names look swapped, change Class numbering.':'Nothing above the confidence line. Lower Confidence.';
+  }catch(e){$('raw').textContent='Error: '+(e.message||e)}finally{busy=false}
+}
+</script></body></html>
