@@ -80,7 +80,7 @@ async function once(src){
       const tx=nm+' '+Math.round(p*100);ox.fillRect(x,Math.max(0,y-ox.measureText('M').width*1.7),ox.measureText(tx).width+8,ox.measureText('M').width*1.7);
       ox.fillStyle='#000';ox.fillText(tx,x+4,Math.max(ox.measureText('M').width*1.3,y-4));}
     tm.push(ms);if(tm.length>20)tm.shift();const avg=tm.reduce((a,b)=>a+b,0)/tm.length;
-    $('k').innerHTML=Object.entries(cnt).map(([k,v])=>'<span>'+k+': '+v+'</span>').join('')+'<span>'+Math.round(avg)+' ms/frame</span><span>'+(1000/avg).toFixed(1)+' fps</span><span>'+S+'px</span>';
+    $('k').innerHTML=Object.entries(cnt).map(([k,v])=>'<span>'+k+': '+v+'</span>').join('')+'<span>'+Math.round(avg)+' ms/frame</span><span>'+(1000/avg).toFixed(1)+' fps</span><span>'+S+'px</span><span>'+C+' model classes</span>';
     $('raw').textContent=Object.keys(raw).length?'Class numbers seen this frame: '+Object.entries(raw).map(([k,v])=>k+' x'+v).join(', ')+'. If the names look swapped, change Class numbering.':'Nothing above the confidence line. Lower Confidence.';
   }catch(e){$('raw').textContent='Error: '+(e.message||e)}finally{busy=false}
 }
