@@ -18,6 +18,7 @@ canvas#o{display:block;max-width:100%;max-height:40vh;width:auto;height:auto;pos
 .row{display:flex;gap:10px;align-items:center}.row>*{flex:1}
 select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px}
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
+.b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
 <h1>BT Tester</h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
@@ -28,9 +29,18 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div><div class="l">Class numbering</div><select id="off"><option value="0">starts at 0</option><option value="1">starts at 1</option></select></div></div>
 <div class="row" style="margin-top:8px"><div><div class="l">Names in order</div><input id="nm" value="bag,board,hole" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px"></div>
 <div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div>
-<div style="margin-top:10px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="pose"> Show players (body points)</label> <span id="pst" style="font-size:12px;color:#a1a1aa;margin-left:8px"></span></div></div>
+<div style="margin-top:10px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="pose"> Show players (body points)</label> <span id="pst" style="font-size:12px;color:#a1a1aa;margin-left:8px"></span></div>
+<div class="row" style="margin-top:8px"><div><div class="l">Hold lost bags (sec)</div><input id="hold" type="number" value="3" step="0.5"></div><div><div class="l">Throws first</div><select id="first"><option value="1">Player 1</option><option value="2">Player 2</option></select></div></div>
+<div style="margin-top:8px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="rawb"> Show raw detections (every box, no tracking)</label></div></div>
 <div class="wrap"><video id="v" playsinline muted controls></video><canvas id="o"></canvas></div>
 <div class="k" id="k"><span>No model yet</span></div>
+<div class="card" style="margin-top:12px"><div class="l">Board zone</div>
+<div class="row"><button class="b s" id="cset">Set board corners</button><button class="b s" id="cclr">Clear corners</button></div>
+<div id="chint" style="font-size:12px;color:#a1a1aa;margin-top:6px">Until you set 4 corners, the zone is the plain box around the board (dashed).</div></div>
+<div class="card"><div class="l">Step through (reads every frame in order)</div>
+<div class="row"><button class="b s" id="step1">Step once</button><button class="b s" id="auto">Step through video</button></div>
+<div class="row" style="margin-top:8px"><div><div class="l">Step seconds</div><input id="dt" type="number" step="0.05" value="0.2"></div><button class="b s" id="rst">New round (reset)</button></div></div>
+<div class="card"><div class="l">Tracker</div><div id="tr" style="font-size:13px;color:#d4d4d8">Play or step a video to start.</div></div>
 <div class="card" style="margin-top:12px"><div class="l">What the model found (raw class numbers)</div><div id="raw" style="font-size:12px;color:#d4d4d8">Play a video to see.</div></div>
 <script>
 const $=id=>document.getElementById(id);let sess=null,inName,outs,size=512,busy=false,run=false,img=null;
@@ -48,13 +58,13 @@ $('load').onclick=async()=>{
   $('st').textContent='Ready. Input '+size+'px. Outputs: '+outs.join(', ');
   }catch(e){sess=null;$('st').textContent='Could not load: '+(e.message||e)}
 };
-$('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;const u=URL.createObjectURL(f);
+$('vf').onchange=()=>{const f=$('vf').files[0];if(!f)return;resetTracker();corners=[];const u=URL.createObjectURL(f);
   if(f.type.startsWith('image/')){const i=new Image();i.onload=()=>{img=i;$('v').style.display='none';O.style.position='static';fit(i.width,i.height);ox.drawImage(i,0,0,O.width,O.height);once(i)};i.src=u}
   else{img=null;O.style.position='absolute';$('v').style.display='block';$('v').src=u}};
 const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true}),O=$('o'),ox=O.getContext('2d');
 function fit(w,h){O.width=w;O.height=h;if(img){O.style.width='auto';O.style.height='auto'}else{O.style.width='100%';O.style.height='100%'}}
 $('v').onloadedmetadata=()=>fit($('v').videoWidth,$('v').videoHeight);
-$('v').onplay=()=>{run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false};
+$('v').onplay=()=>{stepping=false;run=true;loop()};$('v').onpause=()=>{run=false};$('v').onended=()=>{run=false};
 async function loop(){if(!run)return;await once($('v'));requestAnimationFrame(loop)}
 let pl=null;
 const BASE='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision';
@@ -76,7 +86,91 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     for(const j of [15,16]){if(!p[j])continue;ox.fillStyle='#f43f5e';ox.beginPath();ox.arc(p[j].x*W,p[j].y*H,Math.max(4,W/110),0,6.283);ox.fill()}
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
-let tm=[],hist={};
+let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false;
+const TXT={flight:'flying',on:'on board',off:'off board',hole:'in hole'},PC={1:'#60a5fa',2:'#f59e0b'};
+function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];showTr()}
+function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
+function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
+function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
+function ordered(P){const cx=P.reduce((s,p)=>s+p.x,0)/P.length,cy=P.reduce((s,p)=>s+p.y,0)/P.length;return P.slice().sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx))}
+function zone(W,H){if(corners.length===4)return ordered(corners.map(c=>({x:c.x*W,y:c.y*H})));if(boardBox){const b=boardBox;return [{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}return null}
+function nearHole(t){if(!holeBox)return false;const h=holeBox,mx=h.w*0.4,my=h.h*0.6,cx=t.x+t.w/2,cy=t.y+t.h/2;return cx>h.x-mx&&cx<h.x+h.w+mx&&cy>h.y-my&&cy<h.y+h.h+my}
+function assign(t){if(t.num||nThrow>=8)return;nThrow++;t.num=nThrow;const f=Number($('first').value);t.pl=nThrow%2===1?f:3-f;t.bn=Math.ceil(nThrow/2);throws.push(t)}
+function track(dets,now,W,H){
+  if(lastNow>=0&&now<lastNow-0.05)resetTracker();
+  lastNow=now;
+  const hb=dets.find(d=>d.nm==='hole');if(hb)holeBox=hb;
+  const bb=dets.find(d=>d.nm==='board');if(bb)boardBox=bb;
+  const Z=zone(W,H),HOLD=Math.max(.5,Number($('hold').value)||3),MINH=img?1:2,LOSS=0.3;
+  const bags=dets.filter(d=>d.nm==='bag'),pairs=[];
+  TR.forEach((t,i)=>{if(t.state==='hole'||t.state==='gone')return;bags.forEach((d,j)=>{const dist=Math.hypot(d.x+d.w/2-t.x-t.w/2,d.y+d.h/2-t.y-t.h/2);if(dist<Math.max(t.w,t.h,d.w,d.h)*1.5+10)pairs.push([dist,i,j])})});
+  pairs.sort((a,b)=>a[0]-b[0]);const ut=new Set(),ud=new Set();
+  for(const [dist,i,j] of pairs){if(ut.has(i)||ud.has(j))continue;ut.add(i);ud.add(j);const t=TR[i],d=bags[j],dt=Math.max(.001,now-t.seen);
+    t.rest=(img||dist<0.012*W||dist/dt<0.05*W)?t.rest+1:0;
+    t.x=d.x;t.y=d.y;t.w=d.w;t.h=d.h;t.p=d.p;t.hits++;t.seen=now;t.missN=0}
+  bags.forEach((d,j)=>{if(!ud.has(j))TR.push({id:nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,hits:1,seen:now,missN:0,rest:img?2:0,state:'flight'})});
+  for(const t of TR){if(t.state==='hole'||t.state==='gone')continue;
+    const miss=now-t.seen;
+    if(miss>0.001){
+      t.missN++;
+      if(t.hits>=MINH&&t.missN>=2&&miss>=LOSS&&nearHole(t)){t.state='hole';t.holeAt=now;assign(t)}
+      else if((miss>HOLD&&t.missN>=2)||(t.hits<MINH&&miss>0.5&&t.missN>=1)){t.prev=t.state;t.state='gone'}
+    }else if(t.hits>=MINH){
+      const inside=Z?inPoly(t.x+t.w/2,t.y+t.h/2,Z):false;
+      if(t.rest>=2)assign(t);
+      t.state=(t.rest>=2||t.num)?(inside?'on':'off'):'flight';
+    }}
+  TR=TR.filter(t=>t.state!=='gone'&&!(t.state==='hole'&&now-t.holeAt>HOLD));
+}
+function showTr(){
+  const S=t=>t.state==='gone'?t.prev:t.state;
+  const tl={1:{hole:0,on:0,off:0},2:{hole:0,on:0,off:0}};
+  throws.forEach(t=>{const s=S(t);if(tl[t.pl]&&tl[t.pl][s]!==undefined)tl[t.pl][s]++});
+  const pt=p=>tl[p].hole*3+tl[p].on,net=pt(1)-pt(2);
+  const rows=throws.slice().sort((a,b)=>a.num-b.num).map(t=>'<div>'+t.num+'. P'+t.pl+'B'+t.bn+' — '+(TXT[S(t)]||'?')+(t.state==='gone'?' (picked up)':'')+'</div>').join('');
+  $('tr').innerHTML='<div><b>Throws seen:</b> '+throws.length+' of 8</div>'+rows+
+   [1,2].map(p=>'<div style="margin-top:6px"><b style="color:'+PC[p]+'">Player '+p+':</b> '+tl[p].hole+' in hole, '+tl[p].on+' on board, '+tl[p].off+' off → '+pt(p)+' pts</div>').join('')+
+   '<div style="margin-top:6px"><b>Net:</b> '+(net===0?'tied':'Player '+(net>0?1:2)+' +'+Math.abs(net))+'</div>';
+}
+function tag(x,y,t,col){const m=ox.measureText('M').width;ox.fillStyle=col;ox.fillRect(x,Math.max(0,y-m*1.7),ox.measureText(t).width+8,m*1.7);ox.fillStyle='#000';ox.fillText(t,x+4,Math.max(m*1.3,y-4))}
+function render(){
+  if(!O.width)return;
+  const W=O.width,H=O.height;ox.clearRect(0,0,W,H);if(img)ox.drawImage(img,0,0,W,H);
+  ox.lineWidth=Math.max(2,W/320);ox.font=Math.max(12,W/45)+'px system-ui';
+  const Z=zone(W,H);
+  if(Z){ox.strokeStyle='#a78bfa';ox.setLineDash(corners.length===4?[]:[8,6]);ox.beginPath();Z.forEach((p,i)=>i?ox.lineTo(p.x,p.y):ox.moveTo(p.x,p.y));ox.closePath();ox.stroke();ox.setLineDash([])}
+  if(holeBox){ox.strokeStyle='#fde047';ox.strokeRect(holeBox.x,holeBox.y,holeBox.w,holeBox.h)}
+  if($('rawb').checked)lastDets.forEach(d=>{ox.strokeStyle=COL[((d.i%COL.length)+COL.length)%COL.length];ox.strokeRect(d.x,d.y,d.w,d.h)});
+  const MINH=img?1:2;
+  for(const t of TR){
+    if(t.hits<MINH){ox.strokeStyle='#71717a';ox.setLineDash([3,4]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);continue}
+    const col=t.num?PC[t.pl]:'#e4e4e7',held=lastNow-t.seen>0.001;
+    ox.strokeStyle=col;if(held)ox.setLineDash([6,5]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);
+    tag(t.x,t.y,(t.num?'P'+t.pl+'B'+t.bn:'bag')+' '+(t.state==='hole'?'IN HOLE':TXT[t.state])+(held&&t.state!=='hole'?' (held)':''),t.state==='hole'?'#4ade80':col)}
+  if(setup)corners.forEach((c,i)=>{ox.fillStyle='#a78bfa';ox.beginPath();ox.arc(c.x*W,c.y*H,Math.max(6,W/70),0,6.283);ox.fill();ox.fillStyle='#000';ox.fillText(String(i+1),c.x*W-4,c.y*H+5)});
+}
+$('cset').onclick=()=>{setup=!setup;O.style.pointerEvents=setup?'auto':'none';if(setup)$('v').pause();
+  $('cset').textContent=setup?'Done with corners':'Set board corners';
+  $('chint').textContent=setup?'Tap the 4 board corners on the picture, any order. After 4, tapping moves the nearest corner.':(corners.length===4?'Board corners set. Bags count as on board when their center is inside the purple shape.':'Until you set 4 corners, the zone is the plain box around the board (dashed).');render()};
+$('cclr').onclick=()=>{corners=[];$('chint').textContent='Corners cleared. Using the plain board box (dashed).';render()};
+O.addEventListener('click',e=>{if(!setup)return;const r=O.getBoundingClientRect(),p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
+  if(corners.length<4)corners.push(p);else{let bi=0,bd=1e9;corners.forEach((c,i)=>{const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;bi=i}});corners[bi]=p}
+  render()});
+$('rst').onclick=()=>{resetTracker();render()};
+$('rawb').onchange=()=>render();
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function seekTo(t){return new Promise(res=>{const v=$('v'),h=()=>{v.removeEventListener('seeked',h);res()};v.addEventListener('seeked',h);v.currentTime=t})}
+async function stepOnce(){const v=$('v');if(img||!v.src||!sess)return false;
+  while(busy)await sleep(50);
+  const dt=Number($('dt').value)||0.2;if(!v.duration||v.currentTime+dt>=v.duration-0.02)return false;
+  v.pause();await seekTo(v.currentTime+dt);await once(v);return true}
+$('step1').onclick=async()=>{if(!sess){$('raw').textContent='Load the model first.';return}stepping=false;await stepOnce()};
+$('auto').onclick=async()=>{
+  if(stepping){stepping=false;return}
+  if(!sess){$('raw').textContent='Load the model first.';return}
+  stepping=true;$('auto').textContent='Stop stepping';
+  while(stepping){if(!(await stepOnce()))break}
+  stepping=false;$('auto').textContent='Step through video'};
 async function once(src){
   if(!sess||busy)return;busy=true;
   try{
@@ -90,16 +184,16 @@ async function once(src){
     let bx=null,lg=null;for(const k of outs){const t=r[k];const last=t.dims[t.dims.length-1];if(last===4&&!bx)bx=t;else lg=t}
     if(!bx||!lg){$('raw').textContent='Unexpected outputs: '+outs.map(k=>k+' '+r[k].dims).join(' | ');return}
     const Q=bx.dims[1],C=lg.dims[2],th=$('th').value/100,off=Number($('off').value),names=$('nm').value.split(',').map(s=>s.trim());
-    ox.clearRect(0,0,O.width,O.height);if(img&&src===img)ox.drawImage(img,0,0,O.width,O.height);ox.lineWidth=Math.max(2,O.width/320);ox.font=Math.max(12,O.width/45)+'px system-ui';
-    const cnt={},raw={};
+    const raw={};let dets=[];
     for(let q=0;q<Q;q++){let best=-1,bs=-1e9;for(let c=0;c<C;c++){const v=lg.data[q*C+c];if(v>bs){bs=v;best=c}}
       const p=1/(1+Math.exp(-bs));if(p<th)continue;
       const cxn=bx.data[q*4],cyn=bx.data[q*4+1],w=bx.data[q*4+2],h=bx.data[q*4+3];
-      const x=(cxn-w/2)*O.width,y=(cyn-h/2)*O.height,ww=w*O.width,hh=h*O.height;
-      const nmi=best-off,nm=names[nmi]||('#'+best);raw[best]=(raw[best]||0)+1;cnt[nm]=(cnt[nm]||0)+1;
-      const col=COL[((nmi%COL.length)+COL.length)%COL.length];ox.strokeStyle=col;ox.fillStyle=col;ox.strokeRect(x,y,ww,hh);
-      const tx=nm+' '+Math.round(p*100);ox.fillRect(x,Math.max(0,y-ox.measureText('M').width*1.7),ox.measureText(tx).width+8,ox.measureText('M').width*1.7);
-      ox.fillStyle='#000';ox.fillText(tx,x+4,Math.max(ox.measureText('M').width*1.3,y-4));}
+      const nmi=best-off;raw[best]=(raw[best]||0)+1;
+      dets.push({nm:(names[nmi]||'#'+best).toLowerCase(),i:nmi,p,x:(cxn-w/2)*O.width,y:(cyn-h/2)*O.height,w:w*O.width,h:h*O.height})}
+    dets=nms(dets);
+    track(dets,img?0:$('v').currentTime,O.width,O.height);lastDets=dets;
+    render();showTr();
+    const cnt={};dets.forEach(d=>cnt[d.nm]=(cnt[d.nm]||0)+1);
     let np=null,pms=0;
     if($('pose').checked&&pl){try{const t1=performance.now();const pr=pl.detectForVideo(src,performance.now());pms=performance.now()-t1;const ps=pr.landmarks||[];np=ps.length;drawPose(ps)}catch(e){$('pst').textContent='Body error: '+(e.message||e)}}
     tm.push(ms);if(tm.length>20)tm.shift();const avg=tm.reduce((a,b)=>a+b,0)/tm.length;
