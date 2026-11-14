@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build flight-rules-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build flight-rules-2</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -30,7 +30,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div class="row" style="margin-top:8px"><div><div class="l">Names in order</div><input id="nm" value="bag,board,hole" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px"></div>
 <div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div>
 <div style="margin-top:10px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="pose"> Show players (body points)</label> <span id="pst" style="font-size:12px;color:#a1a1aa;margin-left:8px"></span></div>
-<div class="row" style="margin-top:8px"><div><div class="l">Hold lost bags (sec)</div><input id="hold" type="number" value="3" step="0.5"></div><div><div class="l">Throws first</div><select id="first"><option value="1">Player 1</option><option value="2">Player 2</option></select></div></div>
+<div class="row" style="margin-top:8px"><div style="display:none"><input id="hold" type="number" value="3"></div><div><div class="l">Throws first</div><select id="first"><option value="1">Player 1</option><option value="2">Player 2</option></select></div></div>
 <div style="margin-top:8px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="rawb"> Show raw detections (every box, no tracking)</label></div></div>
 <div class="wrap"><video id="v" playsinline muted controls></video><canvas id="o"></canvas></div>
 <div class="k" id="k"><span>No model yet</span></div>
@@ -206,12 +206,12 @@ function render(){
   for(const t of TR){
     if(!t.num)continue;
     const cx0=t.x+t.w/2,cy0=t.y+t.h/2,ins=Z?inPoly(cx0,cy0,Z):false;
-    if(t.state==='flight'&&!ins&&!inBox(AR,cx0,cy0))continue;
+    if(t.state==='flight'&&(lastNow-t.seen>0.001||(!ins&&!inBox(AR,cx0,cy0))))continue;
     let bx=t.x,by=t.y;
     if(t.state==='hole'){if(drawn.has(t.num))continue;drawn.add(t.num);if(holeBox){bx=holeBox.x+holeBox.w/2-t.w/2;by=holeBox.y+holeBox.h/2-t.h/2}by-=hk*ox.measureText('M').width*1.8;hk++}
-    const col=PC[t.pl],held=lastNow-t.seen>0.001&&t.state!=='hole',key=t.state==='flight'?(ins?'moving':'flying'):t.state,stt=key==='flying'||key==='moving'?key:TXT[t.state];
-    ox.strokeStyle=SC[key];ox.lineWidth=Math.max(2,W/320)*(key==='hole'?1.6:1);if(held)ox.setLineDash([6,5]);ox.strokeRect(bx,by,t.w,t.h);ox.setLineDash([]);ox.lineWidth=Math.max(2,W/320);
-    tag(bx,by,'P'+t.pl+'B'+t.bn+' '+stt+(held?' (held)':''),col)}
+    const col=PC[t.pl],key=t.state==='flight'?(ins?'moving':'flying'):t.state,stt=key==='flying'||key==='moving'?key:TXT[t.state];
+    ox.strokeStyle=SC[key];ox.lineWidth=Math.max(2,W/320)*(key==='hole'?1.6:1);ox.strokeRect(bx,by,t.w,t.h);ox.lineWidth=Math.max(2,W/320);
+    tag(bx,by,'P'+t.pl+'B'+t.bn+' '+stt,col)}
   const nl=nextLabel(),lt=throws[throws.length-1];
   if(nl&&!(lt&&needsCheck(lt)&&lt.state==='flight')){const c=TR.filter(t=>t.cand&&!t.num).sort((a,b)=>b.D-a.D)[0];
     if(c){ox.strokeStyle=SC.flying;ox.setLineDash([6,5]);ox.strokeRect(c.x,c.y,c.w,c.h);ox.setLineDash([]);tag(c.x,c.y,'P'+nl.pl+'B'+nl.bn+' flying?',PC[nl.pl])}}
