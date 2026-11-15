@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build restore-fc868b7</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build new-tracker-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -30,7 +30,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div class="row" style="margin-top:8px"><div><div class="l">Names in order</div><input id="nm" value="bag,board,hole" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px"></div>
 <div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div>
 <div style="margin-top:10px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="pose"> Show players (body points)</label> <span id="pst" style="font-size:12px;color:#a1a1aa;margin-left:8px"></span></div>
-<div class="row" style="margin-top:8px"><div><div class="l">Hold lost bags (sec)</div><input id="hold" type="number" value="3" step="0.5"></div><div><div class="l">Throws first</div><select id="first"><option value="1">Player 1</option><option value="2">Player 2</option></select></div></div>
+<div style="margin-top:8px"><div class="l">Throws first</div><select id="first"><option value="1">Player 1</option><option value="2">Player 2</option></select></div>
 <div style="margin-top:8px"><label style="font-size:13px;color:#d4d4d8"><input type="checkbox" id="rawb"> Show raw detections (every box, no tracking)</label></div></div>
 <div class="wrap"><video id="v" playsinline muted controls></video><canvas id="o"></canvas></div>
 <div class="k" id="k"><span>No model yet</span></div>
@@ -39,7 +39,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div id="chint" style="font-size:12px;color:#a1a1aa;margin-top:6px">Until you set 4 corners, the zone is the plain box around the board (dashed).</div></div>
 <div class="card"><div class="l">Step through (reads every frame in order)</div>
 <div class="row"><button class="b s" id="step1">Step once</button><button class="b s" id="auto">Step through video</button></div>
-<div class="row" style="margin-top:8px"><div><div class="l">Step seconds</div><input id="dt" type="number" step="0.05" value="0.2"></div><button class="b s" id="rst">New round (reset)</button></div></div>
+<div style="font-size:12px;color:#d4d4d8;margin-top:8px">Tracking reads one frame every 0.1 seconds. Play shows boxes only.</div><div class="row" style="margin-top:8px"><button class="b s" id="rst">New round (reset)</button><button class="b s" id="savelog">Save run log</button></div></div>
 <div class="card"><div class="l">Tracker</div><div id="tr" style="font-size:13px;color:#d4d4d8">Play or step a video to start.</div></div>
 <div class="card" style="margin-top:12px"><div class="l">What the model found (raw class numbers)</div><div id="raw" style="font-size:12px;color:#d4d4d8">Play a video to see.</div></div>
 <script>
@@ -86,78 +86,130 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     for(const j of [15,16]){if(!p[j])continue;ox.fillStyle='#f43f5e';ox.beginPath();ox.arc(p[j].x*W,p[j].y*H,Math.max(4,W/110),0,6.283);ox.fill()}
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
-let tm=[],TR=[],nid=1,throws=[],holeBox=null,boardBox=null,corners=[],lastNow=-1,nThrow=0,lastDets=[],setup=false,stepping=false,lastAssign=-99;
-const TXT={flight:'moving',on:'on board',off:'off board',hole:'in hole'},PC={1:'#60a5fa',2:'#f59e0b'};
-function resetTracker(){TR=[];nid=1;throws=[];holeBox=null;boardBox=null;lastNow=-1;nThrow=0;lastDets=[];lastAssign=-99;showTr()}
+let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
+const BUILD='new-tracker-1',DT=0.1;
+const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
-function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
 function ordered(P){const cx=P.reduce((s,p)=>s+p.x,0)/P.length,cy=P.reduce((s,p)=>s+p.y,0)/P.length;return P.slice().sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx))}
+function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
 function zone(W,H){if(corners.length===4)return ordered(corners.map(c=>({x:c.x*W,y:c.y*H})));if(boardBox){const b=boardBox;return [{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}return null}
-function overHole(t){if(!holeBox)return false;const h=holeBox,cx=t.x+t.w/2,cy=t.y+t.h/2,mx=h.w*0.15,my=h.h*0.25;
-  if(cx>h.x-mx&&cx<h.x+h.w+mx&&cy>h.y-my&&cy<h.y+h.h+my)return true;
-  const ox1=Math.max(t.x,h.x),oy1=Math.max(t.y,h.y),ox2=Math.min(t.x+t.w,h.x+h.w),oy2=Math.min(t.y+t.h,h.y+h.h);
-  return Math.max(0,ox2-ox1)*Math.max(0,oy2-oy1)>=0.35*t.w*t.h}
-function arenaBox(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;return {x:x0-0.15*w,y:y0-1.2*h,w:w*1.3,h:h*2.2}}
-function adopt(t,now,HOLD){const o=TR.filter(x=>x!==t&&x.num&&!x.landed&&x.state==='flight'&&now-x.seen>0.001&&now-x.seen<HOLD).sort((a,b)=>b.seen-a.seen)[0];
-  if(!o)return false;t.num=o.num;t.pl=o.pl;t.bn=o.bn;const i=throws.indexOf(o);if(i>=0)throws[i]=t;o.state='gone';o.prev='flight';return true}
-function assign(t,now){if(t.num||nThrow>=8)return;lastAssign=now;nThrow++;t.num=nThrow;const f=Number($('first').value);t.pl=nThrow%2===1?f:3-f;t.bn=Math.ceil(nThrow/2);throws.push(t)}
-function track(dets,now,W,H){
-  if(lastNow>=0&&now<lastNow-0.05)resetTracker();
-  lastNow=now;
-  const hb=dets.find(d=>d.nm==='hole');if(hb)holeBox=hb;
-  const bb=dets.find(d=>d.nm==='board');if(bb)boardBox=bb;
-  const Z=zone(W,H),HOLD=Math.max(.5,Number($('hold').value)||3),MINH=img?1:2,LOSS=0.3;
-  const bags=dets.filter(d=>d.nm==='bag'),pairs=[];
-  TR.forEach((t,i)=>{if(t.state==='hole'||t.state==='gone')return;bags.forEach((d,j)=>{const dist=Math.hypot(d.x+d.w/2-t.x-t.w/2,d.y+d.h/2-t.y-t.h/2);if(dist<Math.max(t.w,t.h,d.w,d.h)*1.5+10)pairs.push([dist,i,j])})});
-  pairs.sort((a,b)=>a[0]-b[0]);const ut=new Set(),ud=new Set();
-  for(const [dist,i,j] of pairs){if(ut.has(i)||ud.has(j))continue;ut.add(i);ud.add(j);const t=TR[i],d=bags[j],dt=Math.max(.001,now-t.seen);
-    t.rest=(img||dist<0.012*W||dist/dt<0.05*W)?t.rest+1:0;
-    t.x=d.x;t.y=d.y;t.w=d.w;t.h=d.h;t.p=d.p;t.hits++;t.seen=now;t.missN=0}
-  bags.forEach((d,j)=>{if(!ud.has(j))TR.push({id:nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,hits:1,seen:now,missN:0,rest:img?2:0,state:'flight'})});
-  const AR=arenaBox(Z),GAP=1.5;
-  for(const t of TR){if(t.state==='hole'||t.state==='gone')continue;
-    const miss=now-t.seen;
-    if(miss>0.001){
-      t.missN++;
-      if(t.hits>=MINH&&t.missN>=2&&miss>=LOSS&&overHole(t)){t.state='hole';t.holeAt=now;assign(t,now)}
-      else if((miss>HOLD&&t.missN>=2)||(t.hits<MINH&&miss>0.5&&t.missN>=1)){t.prev=t.state;t.state='gone'}
-    }else if(t.hits>=MINH){
-      const cx0=t.x+t.w/2,cy0=t.y+t.h/2,inside=Z?inPoly(cx0,cy0,Z):false,inAr=AR&&cx0>AR.x&&cx0<AR.x+AR.w&&cy0>AR.y&&cy0<AR.y+AR.h;
-      if(t.rest>=2)t.landed=true;
-      if(!t.num){
-        if(t.landed){if(!adopt(t,now,HOLD)&&inAr)assign(t,now)}
-        else if(inAr&&now-lastAssign>=GAP)assign(t,now);
+/*TRACKER-START: pure logic. Input = model boxes per frame (px) + time. Output = throws + events. No page access. Built for 0.1 s steps.*/
+function makeTracker(){
+  const S={tracks:[],throws:[],events:[],n:0,nid:1,hole:null,board:null,t0:null,first:1,last:-1};
+  const C=o=>({x:o.x+o.w/2,y:o.y+o.h/2}),mn=o=>Math.min(o.w,o.h),mx=o=>Math.max(o.w,o.h),dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
+  const inBox=(B,x,y)=>!!B&&x>B.x&&x<B.x+B.w&&y>B.y&&y<B.y+B.h;
+  function geo(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;
+    return {w,h,lane:{x:x0-1.0*w,y:y0-4*h,w:w*3,h:h*5},under:{x:x0+0.05*w,y:y1,w:w*0.9,h:h*0.9}}}
+  function overHole(o){const H=S.hole;if(!H)return false;const c=C(o),mx_=H.w*0.15,my=H.h*0.25;
+    if(c.x>H.x-mx_&&c.x<H.x+H.w+mx_&&c.y>H.y-my&&c.y<H.y+H.h+my)return true;
+    const ox=Math.max(0,Math.min(o.x+o.w,H.x+H.w)-Math.max(o.x,H.x)),oy=Math.max(0,Math.min(o.y+o.h,H.y+H.h)-Math.max(o.y,H.y));return ox*oy>=0.35*o.w*o.h}
+  const inHoleBox=o=>{const H=S.hole;if(!H)return false;const c=C(o);return inBox(H,c.x,c.y)};
+  function willHole(tr,t){const m=Math.min(t-tr.seen,0.6);for(let f=0;f<=m+1e-9;f+=0.1)if(overHole({x:tr.x+tr.vx*f,y:tr.y+tr.vy*f,w:tr.w,h:tr.h}))return true;return false}
+  const ev=(t,m)=>S.events.push({t,m});
+  const lab=th=>'P'+th.pl+'B'+th.bn;
+  S.geo=geo;S.reset=()=>{S.tracks=[];S.throws=[];S.events=[];S.n=0;S.nid=1;S.hole=null;S.board=null;S.t0=null;S.last=-1};
+  S.next=()=>{const n=S.n+1;if(n>8)return null;return {pl:n%2===1?S.first:3-S.first,bn:Math.ceil(n/2)}};
+  function give(tr,t){if(S.n>=8)return null;S.n++;const f=S.first,th={num:S.n,pl:S.n%2===1?f:3-f,bn:Math.ceil(S.n/2),state:'air',box:{x:tr.x,y:tr.y,w:tr.w,h:tr.h},seenT:t,t0:t};
+    S.throws.push(th);ev(t,lab(th)+' thrown');return th}
+  function adopt(tr,t,maxLost,reach){const c=C(tr),sz=mx(tr);
+    const live=new Set(S.tracks.filter(x=>!x.dead&&x!==tr&&x.th&&x.seen===t).map(x=>x.th));
+    const o=S.throws.filter(th=>th.state!=='hole'&&!live.has(th)&&t-th.seenT>0.001&&t-th.seenT<=maxLost&&dist(C(th.box),c)<reach*sz+80).sort((a,b)=>b.seenT-a.seenT)[0];
+    if(o){if(o.state==='lost')ev(t,lab(o)+' found again');return o}return null}
+  function toHole(tr,t,visible){if(!tr.th)tr.th=adopt(tr,t,1.5,10)||give(tr,t);const th=tr.th;if(!th)return;
+    if(th.state!=='hole'){th.state='hole';th.holeAt=t;ev(t,lab(th)+' in the hole')}
+    if(visible)tr.hole=true;else tr.dead=true}
+  function sizeOK(tr,g){if(!g)return true;const r=tr.w/g.w;return r>0.05&&r<0.5&&mx(tr)/mn(tr)<=2.8}
+  function proof(tr){const m=mn(tr);if(!tr.fly&&((tr.hits>=3&&tr.D>=2.5*m&&tr.str>=0.6)||(tr.hits>=2&&tr.D>=4*m)))tr.fly=true}
+  S.feed=function(dets,t,W,H,Z){
+    if(S.last>=0&&t<S.last-0.05){const f=S.first;S.reset();S.first=f}
+    S.last=t;if(S.t0===null)S.t0=t;
+    const hb=dets.find(d=>d.nm==='hole');if(hb)S.hole=hb;const bb=dets.find(d=>d.nm==='board');if(bb)S.board=bb;
+    if(!Z&&S.board){const b=S.board;Z=[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}
+    const g=geo(Z),bags=dets.filter(d=>d.nm==='bag'),pairs=[];
+    S.tracks.forEach((tr,i)=>{if(tr.dead)return;const dt=Math.min(Math.max(t-tr.seen,0.01),0.5),c=C(tr),pc={x:c.x+tr.vx*dt,y:c.y+tr.vy*dt};
+      bags.forEach((d,j)=>{const dc=C(d),sz=Math.max(mx(tr),mx(d)),dp=dist(dc,c),dq=dist(dc,pc);let ok,cost;
+        if(tr.hole||tr.settled){ok=dp<(tr.hole?1.5:2.2)*sz+15;cost=dp}
+        else{ok=dp<1.6*sz+15||dq<1.2*sz+15;cost=Math.min(dp,dq);
+          if(ok&&tr.hits>=2){const sp=Math.hypot(tr.vx,tr.vy),ex=sp*dt;if(ex>0.8*sz){const pr=((dc.x-c.x)*tr.vx+(dc.y-c.y)*tr.vy)/sp;if(pr<0.4*ex)ok=false}}}
+        if(ok)pairs.push([cost,i,j])})});
+    pairs.sort((a,b)=>a[0]-b[0]);const ut=new Set(),ud=new Set();
+    for(const [,i,j] of pairs){if(ut.has(i)||ud.has(j))continue;ut.add(i);ud.add(j);const tr=S.tracks[i],d=bags[j],c=C(tr),dc=C(d),dt=Math.max(0.01,t-tr.seen),step=dist(dc,c);
+      tr.path+=step;tr.vx=0.6*(dc.x-c.x)/dt+0.4*tr.vx;tr.vy=0.6*(dc.y-c.y)/dt+0.4*tr.vy;
+      tr.hist.push(dc);if(tr.hist.length>6)tr.hist.shift();{const h=tr.hist,mx_=h.reduce((a,p)=>a+p.x,0)/h.length,my=h.reduce((a,p)=>a+p.y,0)/h.length;tr.settled=h.length>=4&&Math.max(...h.map(p=>Math.hypot(p.x-mx_,p.y-my)))<Math.max(0.9*mn(d),6)}
+      tr.x=d.x;tr.y=d.y;tr.w=d.w;tr.h=d.h;tr.p=d.p;tr.hits++;tr.seen=t;tr.missN=0;tr.D=dist(dc,{x:tr.ox,y:tr.oy});tr.str=tr.D/(tr.path+1e-9);proof(tr)}
+    bags.forEach((d,j)=>{if(ud.has(j))return;const dc=C(d),sz=mx(d);
+      const nt={id:S.nid++,x:d.x,y:d.y,w:d.w,h:d.h,p:d.p,vx:0,vy:0,hits:1,seen:t,born:t,ox:dc.x,oy:dc.y,path:0,D:0,str:0,fly:false,settled:false,hist:[dc],missN:0,th:null,hole:false,dead:false,
+        startBag:(t-S.t0<0.35)&&!!Z&&inPoly(dc.x,dc.y,Z)};
+      const par=S.tracks.filter(x=>!x.dead&&!x.th&&!x.fly&&!x.settled&&x.hits<=4&&t-x.seen>0.001&&t-x.seen<0.5&&dist(dc,C(x))<sz*4+30).sort((a,b)=>b.seen-a.seen)[0];
+      if(par){const pc=C(par),dt=Math.max(0.05,t-par.seen);nt.ox=par.ox;nt.oy=par.oy;nt.path=par.path+dist(dc,pc);nt.hits=par.hits+1;nt.D=dist(dc,{x:nt.ox,y:nt.oy});nt.str=nt.D/(nt.path+1e-9);
+        nt.vx=(dc.x-pc.x)/dt;nt.vy=(dc.y-pc.y)/dt;nt.startBag=par.startBag;par.dead=true;proof(nt)}
+      S.tracks.push(nt)});
+    for(const tr of S.tracks){if(tr.dead)continue;
+      if(tr.seen!==t){tr.missN++;const th=tr.th;
+        if(!th){if(t-tr.seen>0.6)tr.dead=true;continue}
+        if(tr.hole){if(t-tr.seen>2)tr.dead=true;continue}
+        if(th.state!=='hole'&&((tr.missN>=2&&overHole(tr))||(tr.missN>=3&&tr.fly&&willHole(tr,t)))){toHole(tr,t,false);continue}
+        const lim=(th.state==='air'||th.state==='moving')?1.0:2.0;
+        if(t-tr.seen>lim){tr.dead=true;if(th.state==='air'||th.state==='moving'){th.state='lost';ev(t,lab(th)+' lost in the air (airmail?)')}}
+        continue}
+      if(tr.hole)continue;
+      const c=C(tr),inside=Z?inPoly(c.x,c.y,Z):false,inLane=!!g&&inBox(g.lane,c.x,c.y),under=!!g&&inBox(g.under,c.x,c.y),settled=tr.settled;
+      if(settled&&tr.hits>=3&&!tr.startBag&&(under||inHoleBox(tr))){toHole(tr,t,true);continue}
+      if(!tr.th&&!tr.startBag){
+        if(tr.fly&&(inLane||inside))tr.th=adopt(tr,t,0.8,8)||give(tr,t);
+        else if(settled&&inside&&tr.hits>=3&&sizeOK(tr,g))tr.th=adopt(tr,t,1.5,14)||give(tr,t);
       }
-      t.state=t.landed?(inside?'on':'off'):'flight';
-    }}
-  TR=TR.filter(t=>t.state!=='gone'&&!(t.state==='hole'&&now-t.holeAt>HOLD));
-}
+      if(tr.th){const th=tr.th,ns=settled?(inside?'on':'off'):(inside?'moving':'air');
+        if(th.state!==ns){if(ns==='on')ev(t,lab(th)+' resting on the board');else if(ns==='off')ev(t,lab(th)+' off the board');else if(ns==='moving'&&th.state==='air')ev(t,lab(th)+' on the board, moving');else if(ns==='air'&&th.state==='lost'){}}
+        th.state=ns;th.box={x:tr.x,y:tr.y,w:tr.w,h:tr.h};th.seenT=t}
+    }
+    S.tracks=S.tracks.filter(x=>!x.dead);
+  };
+  return S}
+/*TRACKER-END*/
+const BT=makeTracker();
+function resetTracker(){BT.reset();FRAMES=[];lastDets=[];boardBox=null;showTr()}
+const fmt=t=>Math.floor(t/60)+':'+(t%60).toFixed(1).padStart(4,'0');
 function showTr(){
-  const S=t=>t.state==='gone'?t.prev:t.state;
-  const tl={1:{hole:0,on:0,off:0},2:{hole:0,on:0,off:0}};
-  throws.forEach(t=>{const s=S(t);if(tl[t.pl]&&tl[t.pl][s]!==undefined)tl[t.pl][s]++});
-  const pt=p=>tl[p].hole*3+tl[p].on,net=pt(1)-pt(2);
-  const rows=throws.slice().sort((a,b)=>a.num-b.num).map(t=>'<div>'+t.num+'. P'+t.pl+'B'+t.bn+' — '+(TXT[S(t)]||'?')+(t.state==='gone'?' (picked up)':'')+'</div>').join('');
-  $('tr').innerHTML='<div><b>Throws seen:</b> '+throws.length+' of 8</div>'+rows+
-   [1,2].map(p=>'<div style="margin-top:6px"><b style="color:'+PC[p]+'">Player '+p+':</b> '+tl[p].hole+' in hole, '+tl[p].on+' on board, '+tl[p].off+' off → '+pt(p)+' pts</div>').join('')+
-   '<div style="margin-top:6px"><b>Net:</b> '+(net===0?'tied':'Player '+(net>0?1:2)+' +'+Math.abs(net))+'</div>';
+  const th=BT.throws.slice().sort((a,b)=>a.num-b.num),tl={1:{hole:0,on:0,off:0},2:{hole:0,on:0,off:0}};
+  th.forEach(x=>{const k=x.state==='hole'?'hole':(x.state==='on'||x.state==='moving')?'on':x.state==='off'?'off':null;if(k&&tl[x.pl])tl[x.pl][k]++});
+  const pt=p=>tl[p].hole*3+tl[p].on,net=pt(1)-pt(2),last=th[th.length-1],nx=BT.next();let now;
+  if(last&&last.state==='air'&&BT.last-last.seenT<0.25)now='<b style="color:'+PC[last.pl]+'">Now throwing: P'+last.pl+'B'+last.bn+'</b> (in the air)';
+  else now=(last?'Last: P'+last.pl+'B'+last.bn+'. ':'')+(nx?'<b style="color:'+PC[nx.pl]+'">Next up: P'+nx.pl+'B'+nx.bn+'</b>':'Round complete');
+  const rows=th.map(x=>'<div>'+x.num+'. P'+x.pl+'B'+x.bn+' — '+TXT[x.state]+'</div>').join('');
+  const evs=BT.events.slice(-8).map(e=>'<div style="font-size:12px;color:#a1a1aa">'+fmt(e.t)+'  '+e.m+'</div>').join('');
+  $('tr').innerHTML='<div>'+now+'</div><div style="margin-top:6px"><b>Throws seen:</b> '+th.length+' of 8</div>'+rows+
+    [1,2].map(p=>'<div style="margin-top:6px"><b style="color:'+PC[p]+'">Player '+p+':</b> '+tl[p].hole+' in hole, '+tl[p].on+' on board, '+tl[p].off+' off → '+pt(p)+' pts</div>').join('')+
+    '<div style="margin-top:6px"><b>Net:</b> '+(net===0?'tied':'Player '+(net>0?1:2)+' +'+Math.abs(net))+'</div>'+(evs?'<div style="margin-top:8px"><b>What it saw</b></div>'+evs:'');
 }
 function tag(x,y,t,col){const m=ox.measureText('M').width;ox.fillStyle=col;ox.fillRect(x,Math.max(0,y-m*1.7),ox.measureText(t).width+8,m*1.7);ox.fillStyle='#000';ox.fillText(t,x+4,Math.max(m*1.3,y-4))}
 function render(){
   if(!O.width)return;
   const W=O.width,H=O.height;ox.clearRect(0,0,W,H);if(img)ox.drawImage(img,0,0,W,H);
   ox.lineWidth=Math.max(2,W/320);ox.font=Math.max(12,W/45)+'px system-ui';
-  const Z=zone(W,H);
+  const Z=zone(W,H),g=BT.geo(Z),m=ox.measureText('M').width;
   if(Z){ox.strokeStyle='#a78bfa';ox.setLineDash(corners.length===4?[]:[8,6]);ox.beginPath();Z.forEach((p,i)=>i?ox.lineTo(p.x,p.y):ox.moveTo(p.x,p.y));ox.closePath();ox.stroke();ox.setLineDash([])}
-  if(holeBox){ox.strokeStyle='#fde047';ox.strokeRect(holeBox.x,holeBox.y,holeBox.w,holeBox.h)}
+  if(BT.hole){ox.strokeStyle='#fde047';ox.strokeRect(BT.hole.x,BT.hole.y,BT.hole.w,BT.hole.h)}
   if($('rawb').checked)lastDets.forEach(d=>{ox.strokeStyle=COL[((d.i%COL.length)+COL.length)%COL.length];ox.strokeRect(d.x,d.y,d.w,d.h)});
-  const MINH=img?1:2;
-  for(const t of TR){
-    if(t.hits<MINH){ox.strokeStyle='#71717a';ox.setLineDash([3,4]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);continue}
-    const col=t.num?PC[t.pl]:'#e4e4e7',held=lastNow-t.seen>0.001,ins=Z?inPoly(t.x+t.w/2,t.y+t.h/2,Z):false,stt=t.state==='hole'?'IN HOLE':t.state==='flight'?(ins?'moving':'flying'):TXT[t.state];
-    ox.strokeStyle=col;if(held)ox.setLineDash([6,5]);ox.strokeRect(t.x,t.y,t.w,t.h);ox.setLineDash([]);
-    tag(t.x,t.y,(t.num?'P'+t.pl+'B'+t.bn:'bag')+' '+stt+(held&&t.state!=='hole'?' (held)':''),t.state==='hole'?'#4ade80':col)}
+  const nowT=BT.last,nx=BT.next();
+  const airSeen=BT.throws.some(x=>x.state==='air'&&nowT-x.seenT<0.001);
+  let cand=null;
+  for(const tr of BT.tracks){if(tr.dead||tr.th||tr.seen!==nowT||tr.hits<2||tr.settled)continue;
+    const mn=Math.min(tr.w,tr.h);if(tr.D<1.5*mn||tr.str<0.5)continue;
+    ox.strokeStyle='#ffd866';ox.setLineDash([3,4]);ox.strokeRect(tr.x,tr.y,tr.w,tr.h);ox.setLineDash([]);
+    const cx=tr.x+tr.w/2,cy=tr.y+tr.h/2;if(g&&cx>g.lane.x&&cx<g.lane.x+g.lane.w&&cy>g.lane.y&&cy<g.lane.y+g.lane.h&&(!cand||tr.D>cand.D))cand=tr}
+  if(cand&&nx&&!airSeen)tag(cand.x,cand.y,'P'+nx.pl+'B'+nx.bn+' flying?',PC[nx.pl]);
+  let hk=0;
+  for(const th of BT.throws.slice().sort((a,b)=>a.num-b.num)){
+    const age=nowT-th.seenT;let b=th.box;
+    if(th.state==='hole'){if(BT.hole)b={x:BT.hole.x+BT.hole.w/2-b.w/2,y:BT.hole.y+BT.hole.h/2-b.h/2-hk*m*1.8,w:b.w,h:b.h};hk++}
+    else if(th.state==='air'){if(age>0.001)continue}
+    else if(th.state==='lost')continue;
+    else if(age>2.0)continue;
+    ox.strokeStyle=SC[th.state];ox.lineWidth=Math.max(2,W/320)*(th.state==='hole'?1.6:1);ox.strokeRect(b.x,b.y,b.w,b.h);ox.lineWidth=Math.max(2,W/320);
+    tag(b.x,b.y,'P'+th.pl+'B'+th.bn+' '+TXT[th.state],PC[th.pl])}
   if(setup)corners.forEach((c,i)=>{ox.fillStyle='#a78bfa';ox.beginPath();ox.arc(c.x*W,c.y*H,Math.max(6,W/70),0,6.283);ox.fill();ox.fillStyle='#000';ox.fillText(String(i+1),c.x*W-4,c.y*H+5)});
 }
 function endSetup(){setup=false;O.style.pointerEvents='none';$('cset').textContent='Set board corners'}
@@ -168,13 +220,15 @@ O.addEventListener('click',e=>{if(!setup)return;const r=O.getBoundingClientRect(
   if(corners.length<4){corners.push(p);if(corners.length===4)endSetup()}else{let bi=0,bd=1e9;corners.forEach((c,i)=>{const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;bi=i}});corners[bi]=p}
   cornerHint();render()});
 $('rst').onclick=()=>{resetTracker();render()};
+$('savelog').onclick=()=>{const f=$('vf').files[0],o={app:'BT Tester',build:BUILD,video:f?f.name:'',W:O.width,H:O.height,step:DT,conf:$('th').value/100,first:Number($('first').value),corners,frames:FRAMES,throws:BT.throws.map(x=>({num:x.num,pl:x.pl,bn:x.bn,state:x.state})),events:BT.events};
+  const bl=new Blob([JSON.stringify(o)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download='bt-run-'+(f?f.name.replace(/\W+/g,'_'):'video')+'.json';a.click()};
 $('rawb').onchange=()=>render();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function seekTo(t){return new Promise(res=>{const v=$('v'),h=()=>{v.removeEventListener('seeked',h);res()};v.addEventListener('seeked',h);v.currentTime=t})}
 async function stepOnce(){const v=$('v');if(img||!v.src||!sess)return false;
   while(busy)await sleep(50);
-  const dt=Number($('dt').value)||0.2;if(!v.duration||v.currentTime+dt>=v.duration-0.02)return false;
-  v.pause();await seekTo(v.currentTime+dt);await once(v);return true}
+  const dt=DT;if(!v.duration||v.currentTime+dt>=v.duration-0.02)return false;
+  v.pause();await seekTo(v.currentTime+dt);await once(v,true);return true}
 $('step1').onclick=async()=>{if(!sess){$('raw').textContent='Load the model first.';return}stepping=false;await stepOnce()};
 $('auto').onclick=async()=>{
   if(stepping){stepping=false;return}
@@ -182,7 +236,7 @@ $('auto').onclick=async()=>{
   stepping=true;$('auto').textContent='Stop stepping';
   while(stepping){if(!(await stepOnce()))break}
   stepping=false;$('auto').textContent='Step through video'};
-async function once(src){
+async function once(src,doTrack){
   if(!sess||busy)return;busy=true;
   try{
     const W=src.videoWidth||src.width,H=src.videoHeight||src.height,S=Number($('sz').value)||size;
@@ -202,7 +256,10 @@ async function once(src){
       const nmi=best-off;raw[best]=(raw[best]||0)+1;
       dets.push({nm:(names[nmi]||'#'+best).toLowerCase(),i:nmi,p,x:(cxn-w/2)*O.width,y:(cyn-h/2)*O.height,w:w*O.width,h:h*O.height})}
     dets=nms(dets);
-    track(dets,img?0:$('v').currentTime,O.width,O.height);lastDets=dets;
+    lastDets=dets;{const bb=dets.find(d=>d.nm==='board');if(bb)boardBox=bb}
+    if(doTrack&&!img){const t=$('v').currentTime;if(FRAMES.length&&t<FRAMES[FRAMES.length-1].t-0.05)FRAMES=[];BT.first=Number($('first').value);
+      BT.feed(dets,t,O.width,O.height,zone(O.width,O.height));
+      FRAMES.push({t:+t.toFixed(3),d:dets.map(d=>({n:d.nm,p:+d.p.toFixed(2),x:Math.round(d.x),y:Math.round(d.y),w:Math.round(d.w),h:Math.round(d.h)}))})}
     render();showTr();
     const cnt={};dets.forEach(d=>cnt[d.nm]=(cnt[d.nm]||0)+1);
     let np=null,pms=0;
