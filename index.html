@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build new-tracker-3</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build new-tracker-4</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -87,7 +87,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
-const BUILD='new-tracker-3',DT=0.1;
+const BUILD='new-tracker-4',DT=0.1;
 const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -132,7 +132,7 @@ function makeTracker(){
       bags.forEach((d,j)=>{const dc=C(d),sz=Math.max(mx(tr),mx(d)),dp=dist(dc,c),dq=dist(dc,pc);let ok,cost;
         if(tr.hole||tr.settled){ok=dp<(tr.hole?1.5:2.2)*sz+15;cost=dp}
         else{ok=dp<1.6*sz+15||dq<1.2*sz+15;cost=Math.min(dp,dq);
-          if(ok&&tr.hits>=2){const sp=Math.hypot(tr.vx,tr.vy),ex=sp*dt;if(ex>0.8*sz){const pr=((dc.x-c.x)*tr.vx+(dc.y-c.y)*tr.vy)/sp;if(pr<0.4*ex)ok=false}}}
+          if(ok&&tr.hits>=2&&!tr.th){const sp=Math.hypot(tr.vx,tr.vy),ex=sp*dt;if(ex>0.8*sz){const pr=((dc.x-c.x)*tr.vx+(dc.y-c.y)*tr.vy)/sp;if(pr<0.4*ex)ok=false}}}
         if(ok)pairs.push([cost,i,j])})});
     pairs.sort((a,b)=>a[0]-b[0]);const ut=new Set(),ud=new Set();
     for(const [,i,j] of pairs){if(ut.has(i)||ud.has(j))continue;ut.add(i);ud.add(j);const tr=S.tracks[i],d=bags[j],c=C(tr),dc=C(d),dt=Math.max(0.01,t-tr.seen),step=dist(dc,c);
@@ -201,7 +201,8 @@ function render(){
     const cx=tr.x+tr.w/2,cy=tr.y+tr.h/2;if(!(g&&cx>g.lane.x&&cx<g.lane.x+g.lane.w&&cy>g.lane.y&&cy<g.lane.y+g.lane.h))continue;
     ox.strokeStyle='#ffd866';ox.setLineDash([3,4]);ox.strokeRect(tr.x,tr.y,tr.w,tr.h);ox.setLineDash([]);
     if(!cand||tr.D>cand.D)cand=tr}
-  if(cand&&nx&&!airSeen)tag(cand.x,cand.y,'P'+nx.pl+'B'+nx.bn+' flying?',PC[nx.pl]);
+  const busy=BT.throws.some(x=>(x.state==='air'||x.state==='moving')&&nowT-x.seenT<1.0);
+  if(cand&&nx&&!airSeen&&!busy){const t='P'+nx.pl+'B'+nx.bn+' flying?',ty=Math.max(0,cand.y-m*1.7);tag(cand.x,cand.y,t,SC.air);ox.fillStyle=PC[nx.pl];ox.fillRect(cand.x-7,ty,7,m*1.7)}
   let hk=0;
   for(const th of BT.throws.slice().sort((a,b)=>a.num-b.num)){
     const age=nowT-th.seenT;let b=th.box;
@@ -225,17 +226,17 @@ $('savelog').onclick=()=>{const f=$('vf').files[0],o={app:'BT Tester',build:BUIL
   const bl=new Blob([JSON.stringify(o)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download='bt-run-'+(f?f.name.replace(/\W+/g,'_'):'video')+'.json';a.click()};
 $('rawb').onchange=()=>render();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-function seekTo(t){return new Promise(res=>{const v=$('v'),h=()=>{v.removeEventListener('seeked',h);res()};v.addEventListener('seeked',h);v.currentTime=t})}
+function seekTo(t){return new Promise((res,rej)=>{const v=$('v'),h=()=>{clearTimeout(to);v.removeEventListener('seeked',h);res()},to=setTimeout(()=>{v.removeEventListener('seeked',h);rej(new Error('video seek timed out at '+t.toFixed(2)+' s'))},8000);v.addEventListener('seeked',h);v.currentTime=t})}
 async function stepOnce(){const v=$('v');if(img||!v.src||!sess)return false;
   while(busy)await sleep(50);
   const dt=DT;if(!v.duration||v.currentTime+dt>=v.duration-0.02)return false;
   v.pause();await seekTo(v.currentTime+dt);await once(v,true);return true}
-$('step1').onclick=async()=>{if(!sess){$('raw').textContent='Load the model first.';return}stepping=false;await stepOnce()};
+$('step1').onclick=async()=>{if(!sess){$('raw').textContent='Load the model first.';return}stepping=false;try{await stepOnce()}catch(e){$('raw').textContent='STOPPED: '+(e&&e.message||e)}};
 $('auto').onclick=async()=>{
   if(stepping){stepping=false;return}
   if(!sess){$('raw').textContent='Load the model first.';return}
   stepping=true;$('auto').textContent='Stop stepping';
-  while(stepping){if(!(await stepOnce()))break}
+  try{while(stepping){if(!(await stepOnce()))break}}catch(e){$('raw').textContent='STOPPED: '+(e&&e.message||e)+' (at '+$('v').currentTime.toFixed(2)+' s). Tap Save run log, then Step through video to continue.'}
   stepping=false;$('auto').textContent='Step through video'};
 async function once(src,doTrack){
   if(!sess||busy)return;busy=true;
@@ -245,7 +246,7 @@ async function once(src,doTrack){
     const d=cx.getImageData(0,0,S,S).data,n=S*S,f=new Float32Array(3*n),m=[0.485,0.456,0.406],sd=[0.229,0.224,0.225];
     for(let i=0;i<n;i++){for(let c=0;c<3;c++)f[c*n+i]=(d[i*4+c]/255-m[c])/sd[c]}
     const t0=performance.now();
-    const r=await sess.run({[inName]:new ort.Tensor('float32',f,[1,3,S,S])});
+    const r=await Promise.race([sess.run({[inName]:new ort.Tensor('float32',f,[1,3,S,S])}),new Promise((_,rej)=>setTimeout(()=>rej(new Error('the model took over 60 s on this frame; the phone may be out of memory')),60000))]);
     const ms=performance.now()-t0;
     let bx=null,lg=null;for(const k of outs){const t=r[k];const last=t.dims[t.dims.length-1];if(last===4&&!bx)bx=t;else lg=t}
     if(!bx||!lg){$('raw').textContent='Unexpected outputs: '+outs.map(k=>k+' '+r[k].dims).join(' | ');return}
@@ -268,6 +269,6 @@ async function once(src,doTrack){
     tm.push(ms);if(tm.length>20)tm.shift();const avg=tm.reduce((a,b)=>a+b,0)/tm.length;
     $('k').innerHTML=Object.entries(cnt).map(([k,v])=>'<span>'+k+': '+v+'</span>').join('')+'<span>'+Math.round(avg)+' ms/frame</span><span>'+(1000/avg).toFixed(1)+' fps</span><span>'+S+'px</span><span>'+C+' model classes</span>'+(np!==null?'<span>'+np+' people</span><span>'+Math.round(pms)+' ms body</span>':'');
     $('raw').textContent=Object.keys(raw).length?'Class numbers seen this frame: '+Object.entries(raw).map(([k,v])=>k+' x'+v).join(', ')+'. If the names look swapped, change Class numbering.':'Nothing above the confidence line. Lower Confidence.';
-  }catch(e){$('raw').textContent='Error: '+(e.message||e)}finally{busy=false}
+  }catch(e){$('raw').textContent='Error: '+(e.message||e)+' (at '+(src.currentTime||0).toFixed(2)+' s)';if(doTrack)stepping=false}finally{busy=false}
 }
 </script></body></html>
