@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build new-tracker-4</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build viewer-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -41,6 +41,18 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <div class="row"><button class="b s" id="step1">Step once</button><button class="b s" id="auto">Step through video</button></div>
 <div style="font-size:12px;color:#d4d4d8;margin-top:8px">Tracking reads one frame every 0.1 seconds. Play shows boxes only.</div><div class="row" style="margin-top:8px"><button class="b s" id="rst">New round (reset)</button><button class="b s" id="savelog">Save run log</button></div></div>
 <div class="card"><div class="l">Tracker</div><div id="tr" style="font-size:13px;color:#d4d4d8">Play or step a video to start.</div></div>
+<div class="card"><div class="l">Log viewer</div>
+<div style="font-size:13px;color:#d4d4d8">Pick the same video in section 2, then load a saved run log. Tap an event to see that frame with what the tracker saw. Red rows are worth checking.</div>
+<input id="lvf" type="file" accept=".json,application/json" style="margin-top:10px">
+<div id="lvs" style="font-size:13px;color:#d4d4d8;margin-top:8px"></div>
+<div id="lvbox" style="display:none;margin-top:10px">
+<canvas id="lvc" width="270" height="480" style="display:block;margin:0 auto;max-width:100%;max-height:55vh;width:auto;height:auto;background:#09090b;border-radius:12px"></canvas>
+<div id="lvi" style="font-size:14px;color:#fff;margin-top:10px;min-height:20px"></div>
+<div class="row" style="margin-top:10px"><button class="b s" id="lvp">&#9664; 0.1 s</button><button class="b s" id="lvn">0.1 s &#9654;</button></div>
+<div class="row" style="margin-top:10px"><button class="b s" id="lvok">Right</button><button class="b s" id="lvno">Wrong</button></div>
+<input id="lvsay" placeholder="If wrong, what it should be (e.g. P2B2 in the hole)" style="width:100%;height:40px;margin-top:10px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 10px">
+<button class="b s" id="lvsave" style="margin-top:10px">Save my notes</button></div>
+<div id="lvl" style="margin-top:14px"></div></div>
 <div class="card" style="margin-top:12px"><div class="l">What the model found (raw class numbers)</div><div id="raw" style="font-size:12px;color:#d4d4d8">Play a video to see.</div></div>
 <script>
 const $=id=>document.getElementById(id);let sess=null,inName,outs,size=512,busy=false,run=false,img=null;
@@ -87,7 +99,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
-const BUILD='new-tracker-4',DT=0.1;
+const BUILD='viewer-1',DT=0.1;
 const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -271,4 +283,71 @@ async function once(src,doTrack){
     $('raw').textContent=Object.keys(raw).length?'Class numbers seen this frame: '+Object.entries(raw).map(([k,v])=>k+' x'+v).join(', ')+'. If the names look swapped, change Class numbering.':'Nothing above the confidence line. Lower Confidence.';
   }catch(e){$('raw').textContent='Error: '+(e.message||e)+' (at '+(src.currentTime||0).toFixed(2)+' s)';if(doTrack)stepping=false}finally{busy=false}
 }
+
+/*LOGVIEW-START*/
+const LV={log:null,snaps:[],rows:[],sel:-1,idx:0,Z:null,notes:{}};
+const lvc=$('lvc'),lx=lvc.getContext('2d'),lvIn=(B,x,y)=>!!B&&x>B.x&&x<B.x+B.w&&y>B.y&&y<B.y+B.h;
+function lvTag(x,y,t,col,bar){const m=Math.max(14,lvc.width/45);lx.font='bold '+m+'px system-ui';const w=lx.measureText(t).width+10,h=m*1.5,ty=Math.max(0,y-h);lx.fillStyle=col;lx.fillRect(x,ty,w,h);lx.fillStyle='#000';lx.fillText(t,x+5,ty+h*0.72);if(bar){lx.fillStyle=bar;lx.fillRect(x-7,ty,7,h)}}
+function lvReplay(L){const R=makeTracker();R.first=L.first||1;
+  const Z=(L.corners&&L.corners.length===4)?ordered(L.corners.map(c=>({x:c.x*L.W,y:c.y*L.H}))):null,snaps=[];
+  for(const f of L.frames){R.feed(f.d.map(d=>({nm:d.n,p:d.p,x:d.x,y:d.y,w:d.w,h:d.h,i:0})),f.t,L.W,L.H,Z);
+    const g=Z?R.geo(Z):null,c=[];
+    for(const tr of R.tracks){if(tr.dead||tr.th||tr.seen!==f.t||tr.settled||tr.startBag||(tr.hits>3&&!tr.fly))continue;if(g&&lvIn(g.lane,tr.x+tr.w/2,tr.y+tr.h/2))c.push({x:tr.x,y:tr.y,w:tr.w,h:tr.h})}
+    snaps.push({t:f.t,d:f.d,c,hole:R.hole?{x:R.hole.x,y:R.hole.y,w:R.hole.w,h:R.hole.h}:null,th:R.throws.map(t=>({num:t.num,pl:t.pl,bn:t.bn,state:t.state,box:{x:t.box.x,y:t.box.y,w:t.box.w,h:t.box.h},seenT:t.seenT}))})}
+  return {R,snaps,Z}}
+function lvRows(R,snaps,Z){const g=Z?R.geo(Z):null,flags={},seenRest={},thBy={};
+  const idxAt=t=>{let b=0,bd=1e9;snaps.forEach((s,i)=>{const d=Math.abs(s.t-t);if(d<bd){bd=d;b=i}});return b};
+  const lab=m=>{const x=/^P(\d)B(\d)/.exec(m);return x?'P'+x[1]+'B'+x[2]:null};
+  R.throws.forEach(t=>thBy['P'+t.pl+'B'+t.bn]=t);
+  const merges=[];snaps.forEach(sn=>{const act=sn.th.filter(x=>(x.state==='moving'||x.state==='on')&&sn.t-x.seenT<0.5);
+    for(let a=0;a<act.length;a++)for(let b=a+1;b<act.length;b++){const A=act[a].box,B=act[b].box,dx=Math.max(0,Math.abs(A.x+A.w/2-B.x-B.w/2)-(A.w+B.w)/2),dy=Math.max(0,Math.abs(A.y+A.h/2-B.y-B.h/2)-(A.h+B.h)/2);
+      if(Math.hypot(dx,dy)>0.1*Math.min(A.w,A.h,B.w,B.h))continue;const mid={x:(A.x+A.w/2+B.x+B.w/2)/2,y:(A.y+A.h/2+B.y+B.h/2)/2},rr=1.2*Math.max(A.w,A.h,B.w,B.h);
+      if(sn.hole&&lvIn({x:sn.hole.x-0.1*sn.hole.w,y:sn.hole.y-0.1*sn.hole.h,w:1.2*sn.hole.w,h:1.1*sn.hole.h},mid.x,mid.y))continue;const nd=sn.d.filter(d=>d.n==='bag'&&Math.hypot(d.x+d.w/2-mid.x,d.y+d.h/2-mid.y)<rr).length;
+      if(nd<2&&!merges.some(q=>q.nums[0]===act[a].num&&q.nums[1]===act[b].num&&sn.t-q.t<1))merges.push({t:sn.t,nums:[act[a].num,act[b].num]})}});
+  const add=(ei,t)=>{flags[ei]=flags[ei]?flags[ei]+' / '+t:t};
+  R.events.forEach((e,ei)=>{const lb=lab(e.m),th=lb&&thBy[lb];if(!th)return;const i=idxAt(e.t);
+    if(/ thrown$/.test(e.m)){const b0=snaps[i].th.find(x=>x.num===th.num),bx=b0?b0.box:th.box,cx=bx.x+bx.w/2,cy=bx.y+bx.h/2,lim=4*Math.max(bx.w,bx.h)+80;let n=0,first=null;
+      for(let j=i-1;j>=0&&snaps[i].t-snaps[j].t<=0.65;j--){const hit=snaps[j].d.some(d=>{if(d.n!=='bag')return false;const dx=d.x+d.w/2,dy=d.y+d.h/2;if(Math.hypot(dx-cx,dy-cy)>=lim||(g&&!lvIn(g.lane,dx,dy)))return false;return !snaps[j].th.some(o=>o.num!==th.num&&o.state!=='hole'&&o.state!=='lost'&&snaps[j].t-o.seenT<0.5&&Math.hypot(o.box.x+o.box.w/2-dx,o.box.y+o.box.h/2-dy)<0.8*Math.max(o.box.w,o.box.h))});if(hit){n++;first=snaps[j].t}else if(n>0)break}
+      if(n>=2)add(ei,'numbered '+n+' frames late (bag first seen at '+first.toFixed(1)+' s)')}
+    if(/resting on the board$/.test(e.m)&&!seenRest[lb]){seenRest[lb]=1;if(!R.events.some(x=>x.m===lb+' on the board, moving'))add(ei,'no "moving" frames before resting')}
+    if(/in the hole$/.test(e.m)){const mf=merges.find(q=>q.nums.includes(th.num)&&e.t-q.t>=-0.01&&e.t-q.t<=1.5);if(mf)add(ei,'two bags merged into one box at '+mf.t.toFixed(1)+' s - check which one went in')}
+    if(/lost in the air/.test(e.m))add(ei,'flight never landed - airmail or missed bag?')});
+  const rows=R.events.map((e,ei)=>({t:e.t,text:e.m,flag:flags[ei]||null,i:idxAt(e.t)}));
+  if(R.throws.length!==8)rows.push({t:snaps.length?snaps[snaps.length-1].t:0,text:'End of video',flag:'only '+R.throws.length+' of 8 throws seen',i:snaps.length-1});
+  return rows}
+function lvDraw(i){const L=LV.log,s=LV.snaps[i],v=$('v');if(!L||!s)return;LV.idx=i;
+  const W=v.videoWidth||L.W,H=v.videoHeight||L.H;if(lvc.width!==W||lvc.height!==H){lvc.width=W;lvc.height=H}
+  lx.setLineDash([]);lx.clearRect(0,0,W,H);try{lx.drawImage(v,0,0,W,H)}catch(e){}
+  const k=W/L.W,lw=Math.max(2,W/320),m=Math.max(14,W/45);lx.lineWidth=lw;
+  if(LV.Z){lx.strokeStyle='#a78bfa';lx.beginPath();LV.Z.forEach((p,q)=>q?lx.lineTo(p.x*k,p.y*k):lx.moveTo(p.x*k,p.y*k));lx.closePath();lx.stroke()}
+  s.d.forEach(d=>{if(d.n==='board')return;lx.strokeStyle=d.n==='hole'?'#fde047':'rgba(255,255,255,.75)';lx.setLineDash(d.n==='bag'?[2,4]:[]);lx.strokeRect(d.x*k,d.y*k,d.w*k,d.h*k)});
+  lx.setLineDash([3,4]);lx.strokeStyle='#ffd866';s.c.forEach(b=>lx.strokeRect(b.x*k,b.y*k,b.w*k,b.h*k));lx.setLineDash([]);
+  const inHole=[];
+  s.th.slice().sort((a,b)=>a.num-b.num).forEach(th=>{const age=s.t-th.seenT;
+    if(th.state==='hole'){inHole.push('P'+th.pl+'B'+th.bn);return}
+    if(th.state==='lost')return;if(th.state==='air'&&age>0.001)return;if(age>2.0)return;
+    const b=th.box;lx.strokeStyle=SC[th.state];lx.lineWidth=lw*1.3;lx.strokeRect(b.x*k,b.y*k,b.w*k,b.h*k);lx.lineWidth=lw;
+    lvTag(b.x*k,b.y*k,'P'+th.pl+'B'+th.bn+' '+TXT[th.state],SC[th.state],PC[th.pl])});
+  lx.font='bold '+m+'px system-ui';const hd=s.t.toFixed(1)+' s'+(inHole.length?'   In the hole: '+inHole.join('  '):'');
+  lx.fillStyle='rgba(0,0,0,.7)';lx.fillRect(0,0,lx.measureText(hd).width+16,m*1.8);lx.fillStyle='#fff';lx.fillText(hd,8,m*1.3);
+  $('lvi').textContent='Frame at '+s.t.toFixed(1)+' s'+(LV.sel>=0?' - '+LV.rows[LV.sel].text:'')}
+async function lvGo(i,scroll){i=Math.max(0,Math.min(LV.snaps.length-1,i));const v=$('v');
+  if(!v.src){$('lvs').textContent='Pick the same video in section 2 first.';return}
+  try{v.pause();await seekTo(LV.snaps[i].t);await sleep(40);lvDraw(i);if(scroll)lvc.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(e){$('lvs').textContent='Could not show that frame: '+(e.message||e)}}
+function lvList(){const box=$('lvl');box.innerHTML='';
+  LV.rows.forEach((r,k)=>{const b=document.createElement('button'),n=LV.notes[k],mk=n?(n.verdict==='right'?'  [ok]':'  [wrong]'):'';
+    b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 14px;padding:12px;min-height:54px;border-radius:12px;font-size:14px;font-weight:700;color:#fff;background:'+(r.flag?'#3a1216':'#09090b')+';border:2px solid '+(r.flag?'#ef4444':'#3f3f46')+';'+(k===LV.sel?'box-shadow:0 0 0 3px #2dd4bf;':'');
+    b.innerHTML=r.t.toFixed(1)+' s &nbsp; '+r.text+mk+(r.flag?'<div style="color:#ff8a8a;font-weight:600;font-size:13px;margin-top:4px">&#9888; '+r.flag+'</div>':'');
+    b.onclick=()=>{LV.sel=k;lvList();lvGo(r.i,true)};box.appendChild(b)})}
+function lvLoad(L){if(!L||!L.frames||!L.frames.length)throw new Error('This is not a BT Tester run log.');
+  const {R,snaps,Z}=lvReplay(L);LV.log=L;LV.snaps=snaps;LV.Z=Z;LV.rows=lvRows(R,snaps,Z);LV.sel=-1;LV.notes={};
+  const nf=LV.rows.filter(r=>r.flag).length,vn=$('vf').files&&$('vf').files[0]?$('vf').files[0].name:'';
+  $('lvs').textContent='Loaded '+(L.video||'log')+': '+snaps.length+' frames, '+R.throws.length+' throws, '+nf+' flagged in red.'+(vn&&L.video&&vn!==L.video?' Note: the video in section 2 is '+vn+', not '+L.video+'.':'');
+  $('lvbox').style.display='block';lvList();lvDraw(0)}
+$('lvf').onchange=async()=>{const f=$('lvf').files[0];if(!f)return;try{lvLoad(JSON.parse(await f.text()))}catch(e){$('lvs').textContent='Could not read that file: '+(e.message||e)}};
+$('lvp').onclick=()=>lvGo(LV.idx-1,false);$('lvn').onclick=()=>lvGo(LV.idx+1,false);
+function lvVerdict(v){if(LV.sel<0){$('lvs').textContent='Tap an event in the list first.';return}const r=LV.rows[LV.sel];LV.notes[LV.sel]={t:r.t,event:r.text,flag:r.flag,verdict:v,said:$('lvsay').value.trim()};$('lvsay').value='';lvList()}
+$('lvok').onclick=()=>lvVerdict('right');$('lvno').onclick=()=>lvVerdict('wrong');
+$('lvsave').onclick=()=>{const L=LV.log;if(!L)return;const o={app:'BT Tester notes',build:BUILD,video:L.video,notes:Object.values(LV.notes)},bl=new Blob([JSON.stringify(o)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download='bt-notes-'+String(L.video||'video').replace(/\W+/g,'_')+'.json';a.click()};
+/*LOGVIEW-END*/
 </script></body></html>
