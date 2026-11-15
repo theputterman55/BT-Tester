@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build new-tracker-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build new-tracker-2</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -87,7 +87,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
-const BUILD='new-tracker-1',DT=0.1;
+const BUILD='new-tracker-2',DT=0.1;
 const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -157,6 +157,7 @@ function makeTracker(){
       if(tr.hole)continue;
       const c=C(tr),inside=Z?inPoly(c.x,c.y,Z):false,inLane=!!g&&inBox(g.lane,c.x,c.y),under=!!g&&inBox(g.under,c.x,c.y),settled=tr.settled;
       if(settled&&tr.hits>=3&&!tr.startBag&&(under||inHoleBox(tr))){toHole(tr,t,true);continue}
+      if(!tr.fly&&!tr.startBag&&!settled&&inLane&&tr.hits>=3&&tr.D>=1.5*mn(tr)&&tr.str>=0.75)tr.fly=true;
       if(!tr.th&&!tr.startBag){
         if(tr.fly&&(inLane||inside))tr.th=adopt(tr,t,0.8,8)||give(tr,t);
         else if(settled&&inside&&tr.hits>=3&&sizeOK(tr,g))tr.th=adopt(tr,t,1.5,14)||give(tr,t);
@@ -197,9 +198,9 @@ function render(){
   const airSeen=BT.throws.some(x=>x.state==='air'&&nowT-x.seenT<0.001);
   let cand=null;
   for(const tr of BT.tracks){if(tr.dead||tr.th||tr.seen!==nowT||tr.hits<2||tr.settled)continue;
-    const mn=Math.min(tr.w,tr.h);if(tr.D<1.5*mn||tr.str<0.5)continue;
+    const cx=tr.x+tr.w/2,cy=tr.y+tr.h/2;if(!(g&&cx>g.lane.x&&cx<g.lane.x+g.lane.w&&cy>g.lane.y&&cy<g.lane.y+g.lane.h))continue;
     ox.strokeStyle='#ffd866';ox.setLineDash([3,4]);ox.strokeRect(tr.x,tr.y,tr.w,tr.h);ox.setLineDash([]);
-    const cx=tr.x+tr.w/2,cy=tr.y+tr.h/2;if(g&&cx>g.lane.x&&cx<g.lane.x+g.lane.w&&cy>g.lane.y&&cy<g.lane.y+g.lane.h&&(!cand||tr.D>cand.D))cand=tr}
+    if(!cand||tr.D>cand.D)cand=tr}
   if(cand&&nx&&!airSeen)tag(cand.x,cand.y,'P'+nx.pl+'B'+nx.bn+' flying?',PC[nx.pl]);
   let hk=0;
   for(const th of BT.throws.slice().sort((a,b)=>a.num-b.num)){
@@ -209,7 +210,7 @@ function render(){
     else if(th.state==='lost')continue;
     else if(age>2.0)continue;
     ox.strokeStyle=SC[th.state];ox.lineWidth=Math.max(2,W/320)*(th.state==='hole'?1.6:1);ox.strokeRect(b.x,b.y,b.w,b.h);ox.lineWidth=Math.max(2,W/320);
-    tag(b.x,b.y,'P'+th.pl+'B'+th.bn+' '+TXT[th.state],PC[th.pl])}
+    {const t='P'+th.pl+'B'+th.bn+' '+TXT[th.state],ty=Math.max(0,b.y-m*1.7);tag(b.x,b.y,t,SC[th.state]);ox.fillStyle=PC[th.pl];ox.fillRect(b.x-7,ty,7,m*1.7)}}
   if(setup)corners.forEach((c,i)=>{ox.fillStyle='#a78bfa';ox.beginPath();ox.arc(c.x*W,c.y*H,Math.max(6,W/70),0,6.283);ox.fill();ox.fillStyle='#000';ox.fillText(String(i+1),c.x*W-4,c.y*H+5)});
 }
 function endSetup(){setup=false;O.style.pointerEvents='none';$('cset').textContent='Set board corners'}
