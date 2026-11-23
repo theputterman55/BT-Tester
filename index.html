@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build conf-box-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build lane-flight-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -99,7 +99,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
-const BUILD='conf-box-1',DT=0.1;
+const BUILD='lane-flight-1',DT=0.1;
 const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -113,11 +113,17 @@ function makeTracker(){
   function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
   const inBox=(B,x,y)=>!!B&&x>B.x&&x<B.x+B.w&&y>B.y&&y<B.y+B.h;
   function geo(Z){if(!Z)return null;const xs=Z.map(p=>p.x),ys=Z.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),w=x1-x0,h=y1-y0;
-    return {w,h,lane:{x:x0-1.0*w,y:y0-4*h,w:w*3,h:h*5},under:{x:x0+0.05*w,y:y1,w:w*0.9,h:h*0.9}}}
+    /* Throw lane (everything outside is ignored). Centered on the board. Half-width is LANE_FAR*board width up high (where the players stand),
+       widens to LANE_NEAR*board width at the board's near edge, then runs straight down. Widens over LANE_RISE board heights above the near edge. */
+    const LANE_NEAR=0.77,LANE_FAR=0.293,LANE_RISE=2.88,cx=(x0+x1)/2,hn=LANE_NEAR*w,hf=LANE_FAR*w,yF=y1-LANE_RISE*h;
+    const half=y=>y<=yF?hf:y>=y1?hn:hf+(hn-hf)*(y-yF)/(y1-yF);
+    return {w,h,lane:{x:x0-1.0*w,y:y0-4*h,w:w*3,h:h*5},under:{x:x0+0.05*w,y:y1,w:w*0.9,h:h*0.9},
+      inLane2:(x,y)=>Math.abs(x-cx)<=half(y),laneLine:[{x:cx-hf,y:yF},{x:cx-hn,y:y1}],laneCx:cx,laneHf:hf,laneHn:hn,laneYF:yF,laneY1:y1}}
   function overHole(o){const H=S.hole;if(!H)return false;const c=C(o),mx_=H.w*0.15,my=H.h*0.25;
     if(c.x>H.x-mx_&&c.x<H.x+H.w+mx_&&c.y>H.y-my&&c.y<H.y+H.h+my)return true;
     const ox=Math.max(0,Math.min(o.x+o.w,H.x+H.w)-Math.max(o.x,H.x)),oy=Math.max(0,Math.min(o.y+o.h,H.y+H.h)-Math.max(o.y,H.y));return ox*oy>=0.35*o.w*o.h}
-  const inHoleBox=o=>{const H=S.hole;if(!H)return false;const c=C(o);return inBox(H,c.x,c.y)};
+  /* center must be in the middle of the hole box (inset 20%), so a bag resting on the rim edge is not called in the hole */
+  const inHoleBox=o=>{const H=S.hole;if(!H)return false;const c=C(o);return inBox({x:H.x+0.2*H.w,y:H.y+0.2*H.h,w:0.6*H.w,h:0.6*H.h},c.x,c.y)};
   function willHole(tr,t){const m=Math.min(t-tr.seen,0.6);for(let f=0;f<=m+1e-9;f+=0.1)if(overHole({x:tr.x+tr.vx*f,y:tr.y+tr.vy*f,w:tr.w,h:tr.h}))return true;return false}
   const ev=(t,m)=>S.events.push({t,m});
   const lab=th=>'P'+th.pl+'B'+th.bn;
@@ -147,12 +153,16 @@ function makeTracker(){
     S.last=t;if(S.t0===null)S.t0=t;
     const hb=dets.find(d=>d.nm==='hole'),bb=dets.find(d=>d.nm==='board');if(bb)S.board=bb;holeLock(hb);
     if(!Z&&S.board){const b=S.board;Z=[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}
-    const g=geo(Z),bags=dets.filter(d=>d.nm==='bag'),pairs=[];
+    const g=geo(Z),bags=dets.filter(d=>d.nm==='bag'&&(!g||g.inLane2(d.x+d.w/2,d.y+d.h/2))),pairs=[];
     S.tracks.forEach((tr,i)=>{if(tr.dead)return;const dt=Math.min(Math.max(t-tr.seen,0.01),0.5),c=C(tr),pc={x:c.x+tr.vx*dt,y:c.y+tr.vy*dt};
       bags.forEach((d,j)=>{const dc=C(d),sz=Math.max(mx(tr),mx(d)),dp=dist(dc,c),dq=dist(dc,pc);let ok,cost;
         if(tr.hole||tr.settled){ok=dp<(tr.hole?1.5:2.2)*sz+15;cost=dp}
         else{ok=dp<1.6*sz+15||dq<1.2*sz+15;cost=Math.min(dp,dq);
           if(ok&&tr.hits>=2&&!tr.th){const sp=Math.hypot(tr.vx,tr.vy),ex=sp*dt;if(ex>0.8*sz){const pr=((dc.x-c.x)*tr.vx+(dc.y-c.y)*tr.vy)/sp;if(pr<0.4*ex)ok=false}}}
+        /* Fast flight: a bag in the air speeds up toward the camera and can jump several bag-lengths between frames (or get missed for a frame).
+           If this track is a flight (still in the air, seen within 0.4 s) and the new box is AHEAD of it (toward the camera, roughly in line), it is the same bag, not a new throw. */
+        if(!ok&&!tr.hole&&!tr.settled&&t-tr.seen<=0.4){const th=tr.th,flying=th?th.state==='air':tr.fly;
+          if(flying){const dy=dc.y-c.y,dx=dc.x-c.x;if(dy>-0.25*sz&&Math.abs(dx)<0.6*dy+1.2*sz&&dp<5*sz+30){ok=true;cost=dp*1.5}}}
         if(ok)pairs.push([cost,i,j])})});
     pairs.sort((a,b)=>a[0]-b[0]);const ut=new Set(),ud=new Set();
     for(const [,i,j] of pairs){if(ut.has(i)||ud.has(j))continue;ut.add(i);ud.add(j);const tr=S.tracks[i],d=bags[j],c=C(tr),dc=C(d),dt=Math.max(0.01,t-tr.seen),step=dist(dc,c);
@@ -215,6 +225,9 @@ function render(){
   const Z=zone(W,H),g=BT.geo(Z),m=ox.measureText('M').width;
   if(Z){ox.strokeStyle='#a78bfa';ox.setLineDash(corners.length===4?[]:[8,6]);ox.beginPath();Z.forEach((p,i)=>i?ox.lineTo(p.x,p.y):ox.moveTo(p.x,p.y));ox.closePath();ox.stroke();ox.setLineDash([])}
   if(BT.hole){ox.strokeStyle='#fde047';ox.strokeRect(BT.hole.x,BT.hole.y,BT.hole.w,BT.hole.h)}
+  if(g){ox.save();ox.strokeStyle='#ffd866';ox.lineWidth=Math.max(3,W/150);ox.setLineDash([Math.max(10,W/40),Math.max(8,W/55)]);
+    for(const sg of[-1,1]){ox.beginPath();ox.moveTo(g.laneCx+sg*g.laneHf,0);ox.lineTo(g.laneCx+sg*g.laneHf,g.laneYF);ox.lineTo(g.laneCx+sg*g.laneHn,g.laneY1);ox.lineTo(g.laneCx+sg*g.laneHn,H);ox.stroke()}
+    ox.restore()}
   if($('rawb').checked)lastDets.forEach(d=>{ox.strokeStyle=COL[((d.i%COL.length)+COL.length)%COL.length];ox.strokeRect(d.x,d.y,d.w,d.h)});
   const nowT=BT.last,nx=BT.next();
   const airSeen=BT.throws.some(x=>x.state==='air'&&nowT-x.seenT<0.001);
