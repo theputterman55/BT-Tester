@@ -20,12 +20,12 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build rest2-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build conf-box-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
 <div class="card"><div class="l">Settings</div>
-<div class="row"><div><div class="l">Confidence</div><input id="th" type="range" min="5" max="95" value="40"><div id="thv" style="font-size:12px;color:#a1a1aa">0.40</div></div>
+<div class="row"><div><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="l" style="margin:0">Confidence (%)</div><input id="thn" type="number" inputmode="numeric" min="5" max="95" value="40" style="width:84px;height:44px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;font-size:24px;font-weight:900;text-align:center"></div><input id="th" type="range" min="5" max="95" value="40"></div>
 <div><div class="l">Class numbering</div><select id="off"><option value="0">starts at 0</option><option value="1">starts at 1</option></select></div></div>
 <div class="row" style="margin-top:8px"><div><div class="l">Names in order</div><input id="nm" value="bag,board,hole" style="width:100%;height:38px;background:#09090b;color:#fff;border:1px solid #3f3f46;border-radius:10px;padding:0 8px"></div>
 <div><div class="l">Size (blank = auto)</div><input id="sz" type="number" placeholder="auto"></div></div>
@@ -57,7 +57,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 <script>
 const $=id=>document.getElementById(id);let sess=null,inName,outs,size=512,busy=false,run=false,img=null;
 const COL=['#2dd4bf','#f59e0b','#f43f5e','#a78bfa','#60a5fa'];
-$('th').oninput=()=>$('thv').textContent=($('th').value/100).toFixed(2);
+$('th').oninput=()=>{$('thn').value=$('th').value};$('thn').oninput=()=>{const v=Math.max(5,Math.min(95,Math.round(Number($('thn').value))));if(v)$('th').value=v};$('thn').onchange=()=>{$('thn').value=$('th').value}
 $('mf').onchange=()=>{$('load').disabled=!$('mf').files[0]};
 $('load').onclick=async()=>{
   try{$('st').textContent='Reading model...';const buf=await $('mf').files[0].arrayBuffer();
@@ -99,7 +99,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
-const BUILD='rest2-1',DT=0.1;
+const BUILD='conf-box-1',DT=0.1;
 const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
