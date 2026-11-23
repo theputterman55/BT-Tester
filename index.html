@@ -20,7 +20,7 @@ select,input[type=number]{width:100%;height:38px;background:#09090b;color:#fff;b
 .k{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.k span{background:#09090b;border:1px solid #3f3f46;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800}
 .b.s{width:100%;margin:0;height:40px;font-size:13px}
 </style></head><body>
-<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build viewer-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
+<h1>BT Tester <span style="font-size:12px;color:#a1a1aa;font-weight:400">build hole-lock-1</span></h1><p class="s">Runs your trained model on a video, on this device. Nothing is uploaded.</p>
 <div class="card"><div class="l">1. Model (.onnx)</div><input id="mf" type="file" accept=".onnx">
 <button class="b" id="load" disabled>Load model</button><div id="st"></div></div>
 <div class="card"><div class="l">2. Video or picture</div><input id="vf" type="file" accept="video/*,image/*"></div>
@@ -99,7 +99,7 @@ function drawPose(ps){const W=O.width,H=O.height,L=[[11,13],[13,15],[12,14],[14,
     ox.fillStyle='#fff';ox.fillText('person '+(i+1),p[0].x*W,Math.max(14,p[0].y*H-10));
   });}
 let tm=[],corners=[],setup=false,stepping=false,lastDets=[],boardBox=null,FRAMES=[];
-const BUILD='viewer-1',DT=0.1;
+const BUILD='hole-lock-1',DT=0.1;
 const TXT={air:'flying',moving:'moving',on:'resting',off:'off the board',hole:'in the hole',lost:'lost in the air (airmail?)'},PC={1:'#60a5fa',2:'#f59e0b'},SC={air:'#ffd866',moving:'#3ecf8e',on:'#ff2d2d',off:'#c084fc',hole:'#ffffff',lost:'#71717a'};
 function iou(a,b){const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y),x2=Math.min(a.x+a.w,b.x+b.w),y2=Math.min(a.y+a.h,b.y+b.h),i=Math.max(0,x2-x1)*Math.max(0,y2-y1);return i/(a.w*a.h+b.w*b.h-i+1e-9)}
 function nms(ds){ds.sort((a,b)=>b.p-a.p);const k=[];for(const d of ds){if(d.nm==='bag'){if(!k.some(e=>e.nm==='bag'&&iou(e,d)>0.5))k.push(d)}else k.push(d)}return k}
@@ -108,7 +108,7 @@ function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){
 function zone(W,H){if(corners.length===4)return ordered(corners.map(c=>({x:c.x*W,y:c.y*H})));if(boardBox){const b=boardBox;return [{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}return null}
 /*TRACKER-START: pure logic. Input = model boxes per frame (px) + time. Output = throws + events. No page access. Built for 0.1 s steps.*/
 function makeTracker(){
-  const S={tracks:[],throws:[],events:[],n:0,nid:1,hole:null,board:null,t0:null,first:1,last:-1};
+  const S={tracks:[],throws:[],events:[],n:0,nid:1,hole:null,hRel:null,hSamp:[],board:null,t0:null,first:1,last:-1};
   const C=o=>({x:o.x+o.w/2,y:o.y+o.h/2}),mn=o=>Math.min(o.w,o.h),mx=o=>Math.max(o.w,o.h),dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
   function inPoly(px,py,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a.y>py)!==(b.y>py)&&px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)c=!c}return c}
   const inBox=(B,x,y)=>!!B&&x>B.x&&x<B.x+B.w&&y>B.y&&y<B.y+B.h;
@@ -121,7 +121,15 @@ function makeTracker(){
   function willHole(tr,t){const m=Math.min(t-tr.seen,0.6);for(let f=0;f<=m+1e-9;f+=0.1)if(overHole({x:tr.x+tr.vx*f,y:tr.y+tr.vy*f,w:tr.w,h:tr.h}))return true;return false}
   const ev=(t,m)=>S.events.push({t,m});
   const lab=th=>'P'+th.pl+'B'+th.bn;
-  S.geo=geo;S.reset=()=>{S.tracks=[];S.throws=[];S.events=[];S.n=0;S.nid=1;S.hole=null;S.board=null;S.t0=null;S.last=-1};
+  /* Hole lock: the hole never moves. Its box is fixed from the first 5 frames that show both board and hole (median),
+     stored relative to the board box, so a bag covering the hole can't make the hole box shrink, widen or slide. */
+  function holeLock(hb){const B=S.board;
+    if(S.hRel){if(B)S.hole={nm:'hole',p:1,i:0,locked:true,x:B.x+S.hRel.rx*B.w,y:B.y+S.hRel.ry*B.h,w:S.hRel.rw*B.w,h:S.hRel.rh*B.h};return}
+    if(hb&&B){S.hSamp.push({rx:(hb.x-B.x)/B.w,ry:(hb.y-B.y)/B.h,rw:hb.w/B.w,rh:hb.h/B.h});
+      if(S.hSamp.length>=5){const md=k=>{const a=S.hSamp.map(s=>s[k]).sort((p,q)=>p-q);return a[a.length>>1]};S.hRel={rx:md('rx'),ry:md('ry'),rw:md('rw'),rh:md('rh')};
+        S.hole={nm:'hole',p:1,i:0,locked:true,x:B.x+S.hRel.rx*B.w,y:B.y+S.hRel.ry*B.h,w:S.hRel.rw*B.w,h:S.hRel.rh*B.h};return}}
+    if(hb)S.hole=hb}
+  S.geo=geo;S.reset=()=>{S.tracks=[];S.throws=[];S.events=[];S.n=0;S.nid=1;S.hole=null;S.hRel=null;S.hSamp=[];S.board=null;S.t0=null;S.last=-1};
   S.next=()=>{const n=S.n+1;if(n>8)return null;return {pl:n%2===1?S.first:3-S.first,bn:Math.ceil(n/2)}};
   function give(tr,t){if(S.n>=8)return null;S.n++;const f=S.first,th={num:S.n,pl:S.n%2===1?f:3-f,bn:Math.ceil(S.n/2),state:'air',box:{x:tr.x,y:tr.y,w:tr.w,h:tr.h},seenT:t,t0:t};
     S.throws.push(th);ev(t,lab(th)+' thrown');return th}
@@ -137,7 +145,7 @@ function makeTracker(){
   S.feed=function(dets,t,W,H,Z){
     if(S.last>=0&&t<S.last-0.05){const f=S.first;S.reset();S.first=f}
     S.last=t;if(S.t0===null)S.t0=t;
-    const hb=dets.find(d=>d.nm==='hole');if(hb)S.hole=hb;const bb=dets.find(d=>d.nm==='board');if(bb)S.board=bb;
+    const hb=dets.find(d=>d.nm==='hole'),bb=dets.find(d=>d.nm==='board');if(bb)S.board=bb;holeLock(hb);
     if(!Z&&S.board){const b=S.board;Z=[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}]}
     const g=geo(Z),bags=dets.filter(d=>d.nm==='bag'),pairs=[];
     S.tracks.forEach((tr,i)=>{if(tr.dead)return;const dt=Math.min(Math.max(t-tr.seen,0.01),0.5),c=C(tr),pc={x:c.x+tr.vx*dt,y:c.y+tr.vy*dt};
